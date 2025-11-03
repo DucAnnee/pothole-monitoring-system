@@ -39,7 +39,7 @@ This web app is built with **Next.js** (App Router) and includes **basic REST AP
 ```bash
 git clone https://github.com/your-org/pothole-monitoring-dashboard.git
 cd pothole-monitoring-dashboard
-npm install
+npm install --legacy-peer-deps
 ```
 
 ### 2. Run the development server
