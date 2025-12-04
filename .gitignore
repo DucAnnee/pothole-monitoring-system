@@ -42,3 +42,6 @@ next-env.d.ts
 
 # container data
 container-data
+
+.next
+node_modules
