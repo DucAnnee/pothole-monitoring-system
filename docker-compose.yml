@@ -267,16 +267,16 @@ services:
   # ==========================================================
   #  GRAFANA MONITORING DASHBOARD
   # ==========================================================
-  grafana:
-    image: grafana/grafana:10.0.0
-    container_name: grafana
-    ports:
-      - "3000:3000"
-    volumes:
-      # - ./container-data/grafana/data:/var/lib/grafana
-      - grafana-data:/var/lib/grafana
-    networks:
-      - kafka-net
+  # grafana:
+  #   image: grafana/grafana:10.0.0
+  #   container_name: grafana
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     # - ./container-data/grafana/data:/var/lib/grafana
+  #     - grafana-data:/var/lib/grafana
+  #   networks:
+  #     - kafka-net
 
   # ==========================================================
   #  POLARIS - REST DATA CATALOG FOR ICECBERG
