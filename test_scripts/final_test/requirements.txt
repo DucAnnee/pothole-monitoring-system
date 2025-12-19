@@ -1,0 +1,9 @@
+confluent-kafka
+fastavro
+pyiceberg
+requests
+trino
+minio
+attrs
+hppx
+authlib
