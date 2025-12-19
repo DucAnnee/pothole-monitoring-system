@@ -1,5 +1,9 @@
 
 services:
+
+  # ==========================================================
+  #  KAFKA CLUSTER (3 nodes - 1 controller and 2 brokers - Streaming data ingestion layer)
+  # ==========================================================
   kafka-1:
     image: ${KAFKA_IMAGE}
     hostname: kafka-1
@@ -31,7 +35,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "./opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1",
+          "./opt/kafka/bin/kafka-topics.sh --list --bootstrap-server kafka-1:9094",
         ]
       interval: 10s
       timeout: 10s
@@ -67,7 +71,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "./opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1",
+          "./opt/kafka/bin/kafka-topics.sh --list --bootstrap-server kafka-2:9094",
         ]
       interval: 10s
       timeout: 10s
@@ -103,7 +107,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "./opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1",
+          "./opt/kafka/bin/kafka-topics.sh --list --bootstrap-server kafka-3:9094",
         ]
       interval: 10s
       timeout: 10s
@@ -112,8 +116,12 @@ services:
       # - ./container-data/kafka/kafka-data-3:/var/lib/kafka/data
       - kafka-data-3:/var/lib/kafka/data
 
+  # ==========================================================
+  #  KAFKA UI (Kafka management interface)
+  # ==========================================================
   kafka-ui:
     image: provectuslabs/kafka-ui
+    container_name: kafka-ui
     ports:
       - "8080:8080"
     restart: always
@@ -121,12 +129,50 @@ services:
       KAFKA_CLUSTERS_0_NAME: "kraft-cluster"
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:9094,kafka-2:9094,kafka-3:9094
     depends_on:
-      - kafka-1
-      - kafka-2
-      - kafka-3
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
     networks:
       - kafka-net
 
+  schema-registry:
+    image: confluentinc/cp-schema-registry:latest
+    container_name: schema-registry
+    hostname: schema-registry
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+    ports:
+      # inside container: 8081, on your host: 8082
+      - "8082:8081"
+    environment:
+      # How Schema Registry identifies itself
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+
+      # Where it listens for HTTP
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+
+      # How it talks to Kafka (use INTERNAL listener ports, since this is inside Docker)
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: >
+        PLAINTEXT://kafka-1:9094,
+        PLAINTEXT://kafka-2:9094,
+        PLAINTEXT://kafka-3:9094
+
+      SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: PLAINTEXT
+    networks:
+      - kafka-net
+
+
+  # ==========================================================
+  #  ADDITIONAL DATABASES
+  # ==========================================================
   postgres:
     image: postgres:15
     container_name: postgres
@@ -155,59 +201,32 @@ services:
     networks:
       - kafka-net
 
-  hive-metastore-init:
-    image: apache/hive:4.0.0
-    container_name: hive-metastore-init
-    depends_on:
-      - postgres
-    networks:
-      - kafka-net
-    volumes:
-      - ./container-conf/hive/lib/postgresql-42.7.8.jar:/opt/hive/lib/postgresql-42.7.8.jar
-      - ./container-conf/hive/conf/hive-site.xml:/opt/hive/conf/hive-site.xml
-    entrypoint: >
-      bash -c "
-        echo 'Waiting for PostgreSQL...';
-        echo 'Initializing Hive Metastore schema...';
-        while ! </dev/tcp/postgres/5432 >/dev/null 2>&1; do
-          echo 'PostgreSQL not ready, retrying...';
-          sleep 2;
-        done
-        schematool -dbType postgres -initSchema --verbose || true;
-        echo 'Init completed.';
-      "
 
-  hive-metastore:
-    image: apache/hive:4.0.0
-    container_name: hive-metastore
+  # ==========================================================
+  #  TRINO SQL ENGINE
+  # ==========================================================
+  trino:
+    image: trinodb/trino:478
+    container_name: trino
     depends_on:
-      - hive-metastore-init
-    # environment:
-    #   HIVE_METASTORE_DB_TYPE: postgres
-    #   HIVE_METASTORE_DB_HOST: postgres
-    #   HIVE_METASTORE_DB_NAME: metastore
-    #   HIVE_METASTORE_DB_USER: hive
-    #   HIVE_METASTORE_DB_PASS: hivepassword
-    entrypoint: >
-      bash -c "
-        echo 'Waiting for schema initialization...';
-        until schematool -dbType postgres -info >/dev/null 2>&1; do
-          echo '  Schema not ready... waiting';
-          sleep 3;
-        done;
-        echo 'Schema ready. Starting metastore service...';
-        /opt/hive/bin/hive --service metastore
-      "
+      polaris:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     ports:
-      - "9083:9083"
+      - "8081:8080"
     volumes:
-      - ./container-conf/hive/lib/postgresql-42.7.8.jar:/opt/hive/lib/postgresql-42.7.8.jar
-      - ./container-conf/hive/conf/hive-site.xml:/opt/hive/conf/hive-site.xml
+      - ./container-conf/trino/catalog/iceberg.properties:/etc/trino/catalog/iceberg.properties
     networks:
       - kafka-net
+    restart: on-failure:5
 
+
+  # ==========================================================
+  #  MINIO OBJECT STORAGE (Data lake storage layer)
+  # ==========================================================
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: minio
     command: server /mnt/data --console-address ":9090"
     ports:
@@ -221,8 +240,33 @@ services:
       # - ./container-data/minio/data:/mnt/data
       - minio-data:/mnt/data
     networks:
+      - kafka-net    
+    healthcheck:
+      test: ["CMD", "curl", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 1s
+      timeout: 10s
+
+  setup_bucket:
+    image: quay.io/minio/mc:latest
+    container_name: setup_bucket
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: "/bin/sh"
+    command:
+      - "-c"
+      - >-
+        echo Creating MinIO bucket...;
+        mc alias set admin http://minio:9000 minioadmin minioadmin;
+        mc mb admin/warehouse;
+        mc ls admin;
+        echo Bucket setup complete.;
+    networks:
       - kafka-net
 
+  # ==========================================================
+  #  GRAFANA MONITORING DASHBOARD
+  # ==========================================================
   grafana:
     image: grafana/grafana:10.0.0
     container_name: grafana
@@ -231,6 +275,75 @@ services:
     volumes:
       # - ./container-data/grafana/data:/var/lib/grafana
       - grafana-data:/var/lib/grafana
+    networks:
+      - kafka-net
+
+  # ==========================================================
+  #  POLARIS - REST DATA CATALOG FOR ICECBERG
+  # ==========================================================
+  polaris:
+    image: apache/polaris:1.2.0-incubating
+    container_name: polaris
+    ports:
+      # API port
+      - "8181:8181"
+      # Optional, allows attaching a debugger to the Polaris JVM
+      - "5005:5005"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      JAVA_DEBUG: true
+      JAVA_DEBUG_PORT: "*:5005"
+      AWS_REGION: us-west-2
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+      AWS_ENDPOINT_URL_STS: http://minio:9000
+      POLARIS_BOOTSTRAP_CREDENTIALS: POLARIS,root,s3cr3t
+      polaris.features.DROP_WITH_PURGE_ENABLED: true
+      polaris.realm-context.realms: POLARIS
+      quarkus.otel.sdk.disabled: "true"
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost:8182/q/health"]
+      interval: 2s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+    networks:
+      - kafka-net
+
+  polaris-setup:
+    image: alpine/curl
+    container_name: polaris-setup
+    depends_on:
+      polaris:
+        condition: service_healthy
+    environment:
+      - CLIENT_ID=root
+      - CLIENT_SECRET=s3cr3t
+    volumes:
+      - ./container-conf/polaris/:/polaris
+    entrypoint: "/bin/sh"
+    command:
+      - "-c"
+      - >-
+        chmod +x /polaris/create-catalog.sh;
+        chmod +x /polaris/obtain-token.sh;
+        source /polaris/obtain-token.sh;
+        echo Creating catalog...;
+        export STORAGE_CONFIG_INFO='{"storageType":"S3",
+          "endpoint":"http://localhost:9000",
+          "endpointInternal":"http://minio:9000",
+          "pathStyleAccess":true}';
+        export STORAGE_LOCATION='s3://warehouse';
+        /polaris/create-catalog.sh POLARIS $$TOKEN;
+        echo Extra grants...;
+        curl -H "Authorization: Bearer $$TOKEN" -H 'Content-Type: application/json' \
+          -X PUT \
+          http://polaris:8181/api/management/v1/catalogs/warehouse/catalog-roles/catalog_admin/grants \
+          -d '{"type":"catalog", "privilege":"CATALOG_MANAGE_CONTENT"}';
+        echo Done.;
     networks:
       - kafka-net
 
