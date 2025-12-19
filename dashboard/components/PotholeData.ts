@@ -23,9 +23,9 @@ export const potholes: Pothole[] = [
   {
     id: 1,
     position: {
-      lat: 40.7489,
-      lng: -73.9680,
-      address: "5th Ave & E 45th St, New York, NY"
+      lat: 10.7769,
+      lng: 106.7009,
+      address: "Nguyễn Huệ, District 1, Ho Chi Minh City"
     },
     severity: 9,
     measurements: {
@@ -43,9 +43,9 @@ export const potholes: Pothole[] = [
   {
     id: 2,
     position: {
-      lat: 40.7580,
-      lng: -73.9855,
-      address: "Broadway & W 47th St, New York, NY"
+      lat: 10.7829,
+      lng: 106.6660,
+      address: "Võ Văn Tần, District 3, Ho Chi Minh City"
     },
     severity: 6,
     measurements: {
@@ -63,9 +63,9 @@ export const potholes: Pothole[] = [
   {
     id: 3,
     position: {
-      lat: 40.7614,
-      lng: -73.9776,
-      address: "Park Ave & E 51st St, New York, NY"
+      lat: 10.8014,
+      lng: 106.6509,
+      address: "Cách Mạng Tháng Tám, District 10, Ho Chi Minh City"
     },
     severity: 4,
     measurements: {
@@ -83,9 +83,9 @@ export const potholes: Pothole[] = [
   {
     id: 4,
     position: {
-      lat: 40.7527,
-      lng: -73.9772,
-      address: "Madison Ave & E 44th St, New York, NY"
+      lat: 10.7623,
+      lng: 106.6822,
+      address: "Lê Lai, District 1, Ho Chi Minh City"
     },
     severity: 7,
     measurements: {
@@ -103,9 +103,9 @@ export const potholes: Pothole[] = [
   {
     id: 5,
     position: {
-      lat: 40.7545,
-      lng: -73.9917,
-      address: "7th Ave & W 48th St, New York, NY"
+      lat: 10.8543,
+      lng: 106.6291,
+      address: "Phạm Văn Đồng, Bình Thạnh District, Ho Chi Minh City"
     },
     severity: 3,
     measurements: {
@@ -123,9 +123,9 @@ export const potholes: Pothole[] = [
   {
     id: 6,
     position: {
-      lat: 40.7498,
-      lng: -73.9765,
-      address: "Lexington Ave & E 43rd St, New York, NY"
+      lat: 10.7717,
+      lng: 106.6980,
+      address: "Nguyễn Thị Minh Khai, District 1, Ho Chi Minh City"
     },
     severity: 8,
     measurements: {
@@ -143,9 +143,9 @@ export const potholes: Pothole[] = [
   {
     id: 7,
     position: {
-      lat: 40.7596,
-      lng: -73.9700,
-      address: "3rd Ave & E 50th St, New York, NY"
+      lat: 10.7328,
+      lng: 106.7233,
+      address: "Điện Biên Phủ, Bình Thạnh District, Ho Chi Minh City"
     },
     severity: 5,
     measurements: {
@@ -163,9 +163,9 @@ export const potholes: Pothole[] = [
   {
     id: 8,
     position: {
-      lat: 40.7561,
-      lng: -73.9860,
-      address: "8th Ave & W 49th St, New York, NY"
+      lat: 10.7906,
+      lng: 106.7145,
+      address: "Đinh Tiên Hoàng, Bình Thạnh District, Ho Chi Minh City"
     },
     severity: 10,
     measurements: {

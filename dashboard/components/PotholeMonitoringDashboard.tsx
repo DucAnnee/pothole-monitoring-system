@@ -4,10 +4,14 @@ import { useState, useCallback } from "react";
 import { MapView } from "./MapView";
 import { PotholeDetails } from "./PotholeDetails";
 import { potholes, type Pothole } from "./PotholeData";
-import { Card } from "./ui/card";
-import { Badge } from "./ui/badge";
+import {
+  Box,
+  Card,
+  CardContent,
+  IconButton,
+  Typography,
+} from "@mui/material";
 import { AlertCircle, MapPin, ChevronDown, ChevronUp } from "lucide-react";
-import { Button } from "./ui/button";
 
 export function PotholeMonitoringDashboard() {
   const [selectedPothole, setSelectedPothole] = useState<Pothole | null>(null);
@@ -29,58 +33,78 @@ export function PotholeMonitoringDashboard() {
   const minorCount = potholes.filter((p) => p.severity < 5).length;
 
   return (
-    <div className="w-screen h-screen flex flex-col bg-gray-50">
+    <Box sx={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'grey.50' }}>
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-red-500 rounded-lg flex items-center justify-center">
-              <MapPin className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1>Pothole Monitoring Dashboard</h1>
-              <p className="text-gray-500">Road condition tracking</p>
-            </div>
-          </div>
+      <Box
+        component="header"
+        sx={{
+          bgcolor: 'background.paper',
+          borderBottom: '1px solid',
+          borderColor: 'grey.200',
+          px: 3,
+          py: 2,
+          boxShadow: '0 1px 2px 0 rgb(0 0 0 / 0.05)',
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Box
+              sx={{
+                width: 40,
+                height: 40,
+                bgcolor: '#ef4444',
+                borderRadius: 2,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <MapPin style={{ width: 24, height: 24, color: 'white' }} />
+            </Box>
+            <Box>
+              <Typography variant="h1" component="h1">Pothole Monitoring Dashboard</Typography>
+              <Typography sx={{ color: 'grey.500' }}>Road condition tracking</Typography>
+            </Box>
+          </Box>
 
-          <div className="flex items-center gap-4">
-            <Card className="px-4 py-2 bg-red-50 border-red-200">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 text-red-500" />
-                <div>
-                  <div className="text-gray-500">Critical</div>
-                  <div className="text-red-600">{criticalCount} potholes</div>
-                </div>
-              </div>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Card sx={{ px: 2, py: 1, bgcolor: '#fef2f2', borderColor: '#fecaca' }}>
+              <CardContent sx={{ p: '0 !important', display: 'flex', alignItems: 'center', gap: 1 }}>
+                <AlertCircle style={{ width: 20, height: 20, color: '#ef4444' }} />
+                <Box>
+                  <Typography sx={{ color: 'grey.500', fontSize: '0.875rem' }}>Critical</Typography>
+                  <Typography sx={{ color: '#dc2626', fontWeight: 500 }}>{criticalCount} potholes</Typography>
+                </Box>
+              </CardContent>
             </Card>
 
-            <Card className="px-4 py-2 bg-orange-50 border-orange-200">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 text-orange-500" />
-                <div>
-                  <div className="text-gray-500">Moderate</div>
-                  <div className="text-orange-600">{moderateCount} potholes</div>
-                </div>
-              </div>
+            <Card sx={{ px: 2, py: 1, bgcolor: '#fff7ed', borderColor: '#fed7aa' }}>
+              <CardContent sx={{ p: '0 !important', display: 'flex', alignItems: 'center', gap: 1 }}>
+                <AlertCircle style={{ width: 20, height: 20, color: '#f97316' }} />
+                <Box>
+                  <Typography sx={{ color: 'grey.500', fontSize: '0.875rem' }}>Moderate</Typography>
+                  <Typography sx={{ color: '#ea580c', fontWeight: 500 }}>{moderateCount} potholes</Typography>
+                </Box>
+              </CardContent>
             </Card>
 
-            <Card className="px-4 py-2 bg-yellow-50 border-yellow-200">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 text-yellow-500" />
-                <div>
-                  <div className="text-gray-500">Minor</div>
-                  <div className="text-yellow-600">{minorCount} potholes</div>
-                </div>
-              </div>
+            <Card sx={{ px: 2, py: 1, bgcolor: '#fefce8', borderColor: '#fde047' }}>
+              <CardContent sx={{ p: '0 !important', display: 'flex', alignItems: 'center', gap: 1 }}>
+                <AlertCircle style={{ width: 20, height: 20, color: '#eab308' }} />
+                <Box>
+                  <Typography sx={{ color: 'grey.500', fontSize: '0.875rem' }}>Minor</Typography>
+                  <Typography sx={{ color: '#ca8a04', fontWeight: 500 }}>{minorCount} potholes</Typography>
+                </Box>
+              </CardContent>
             </Card>
-          </div>
-        </div>
-      </header>
+          </Box>
+        </Box>
+      </Box>
 
       {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
+      <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Map Container */}
-        <div className="flex-1 relative">
+        <Box sx={{ flex: 1, position: 'relative' }}>
           <MapView
             potholes={potholes}
             selectedPothole={selectedPothole}
@@ -88,59 +112,66 @@ export function PotholeMonitoringDashboard() {
           />
 
           {/* Legend */}
-          <Card className="absolute bottom-6 left-6 shadow-lg overflow-hidden">
-            <div className="flex items-center justify-between p-4 pb-3">
-              <h3>Severity Scale</h3>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
+          <Card
+            sx={{
+              position: 'absolute',
+              bottom: 24,
+              left: 24,
+              boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
+              overflow: 'hidden',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 2, pb: 1.5 }}>
+              <Typography variant="h3" component="h3">Severity Scale</Typography>
+              <IconButton
+                size="small"
                 onClick={() => setIsLegendExpanded(!isLegendExpanded)}
+                sx={{ width: 24, height: 24 }}
               >
                 {isLegendExpanded ? (
-                  <ChevronDown className="w-4 h-4" />
+                  <ChevronDown style={{ width: 16, height: 16 }} />
                 ) : (
-                  <ChevronUp className="w-4 h-4" />
+                  <ChevronUp style={{ width: 16, height: 16 }} />
                 )}
-              </Button>
-            </div>
+              </IconButton>
+            </Box>
 
             {isLegendExpanded && (
-              <div className="px-4 pb-4">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-red-500 rounded-full" />
-                    <span className="text-gray-600">Critical (8-10)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 bg-orange-500 rounded-full" />
-                    <span className="text-gray-600">Moderate (5-7)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 bg-yellow-500 rounded-full" />
-                    <span className="text-gray-600">Minor (1-4)</span>
-                  </div>
-                </div>
-                <div className="mt-3 pt-3 border-t border-gray-200">
-                  <p className="text-gray-500">
+              <Box sx={{ px: 2, pb: 2 }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ width: 32, height: 32, bgcolor: '#ef4444', borderRadius: '50%' }} />
+                    <Typography sx={{ color: 'grey.600' }}>Critical (8-10)</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ width: 24, height: 24, bgcolor: '#f97316', borderRadius: '50%' }} />
+                    <Typography sx={{ color: 'grey.600' }}>Moderate (5-7)</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ width: 16, height: 16, bgcolor: '#eab308', borderRadius: '50%' }} />
+                    <Typography sx={{ color: 'grey.600' }}>Minor (1-4)</Typography>
+                  </Box>
+                </Box>
+                <Box sx={{ mt: 1.5, pt: 1.5, borderTop: '1px solid', borderColor: 'grey.200' }}>
+                  <Typography sx={{ color: 'grey.500', fontSize: '0.875rem' }}>
                     Click on any marker to view details
-                  </p>
-                </div>
-              </div>
+                  </Typography>
+                </Box>
+              </Box>
             )}
           </Card>
-        </div>
+        </Box>
 
         {/* Details Panel */}
         {selectedPothole && (
-          <div className="w-96 border-l border-gray-200 bg-white shadow-xl">
+          <Box sx={{ width: 384, borderLeft: '1px solid', borderColor: 'grey.200', bgcolor: 'background.paper', boxShadow: '-4px 0 15px -3px rgb(0 0 0 / 0.1)' }}>
             <PotholeDetails
               pothole={selectedPothole}
               onClose={handleCloseDetails}
             />
-          </div>
+          </Box>
         )}
-      </div>
-    </div>
+      </Box>
+    </Box>
   );
 }

@@ -1,9 +1,16 @@
 import { X, MapPin, AlertCircle, Calendar, Activity } from 'lucide-react';
-import { Card } from './ui/card';
-import { Badge } from './ui/badge';
-import { Button } from './ui/button';
-import { Separator } from './ui/separator';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import {
+  Box,
+  Card,
+  CardContent,
+  Chip,
+  Divider,
+  IconButton,
+  Tab,
+  Tabs,
+  Typography,
+} from '@mui/material';
+import { useState } from 'react';
 import type { Pothole } from './PotholeData';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 
@@ -13,10 +20,12 @@ interface PotholeDetailsProps {
 }
 
 export function PotholeDetails({ pothole, onClose }: PotholeDetailsProps) {
+  const [activeTab, setActiveTab] = useState(0);
+
   const getSeverityColor = (severity: number) => {
-    if (severity >= 8) return 'bg-red-500';
-    if (severity >= 5) return 'bg-orange-500';
-    return 'bg-yellow-500';
+    if (severity >= 8) return '#ef4444';
+    if (severity >= 5) return '#f97316';
+    return '#eab308';
   };
 
   const getSeverityLabel = (severity: number) => {
@@ -25,115 +34,190 @@ export function PotholeDetails({ pothole, onClose }: PotholeDetailsProps) {
     return 'Minor';
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusStyles = (status: string) => {
     switch (status) {
-      case 'reported': return 'bg-red-100 text-red-800 border-red-200';
-      case 'in-progress': return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'fixed': return 'bg-green-100 text-green-800 border-green-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+      case 'reported':
+        return { bgcolor: '#fef2f2', color: '#991b1b', borderColor: '#fecaca' };
+      case 'in-progress':
+        return { bgcolor: '#eff6ff', color: '#1e40af', borderColor: '#bfdbfe' };
+      case 'fixed':
+        return { bgcolor: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' };
+      default:
+        return { bgcolor: '#f3f4f6', color: '#374151', borderColor: '#d1d5db' };
     }
   };
 
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
+    setActiveTab(newValue);
+  };
+
   return (
-    <div className="w-full h-full overflow-auto p-6 bg-white">
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <h2 className="mb-2">Pothole Details</h2>
-          <p className="text-gray-500">ID: #{pothole.id}</p>
-        </div>
-        <Button variant="ghost" size="icon" onClick={onClose}>
-          <X className="w-5 h-5" />
-        </Button>
-      </div>
+    <Box sx={{ width: '100%', height: '100%', overflow: 'auto', p: 3, bgcolor: 'background.paper' }}>
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 3 }}>
+        <Box>
+          <Typography variant="h2" component="h2" sx={{ mb: 1 }}>Pothole Details</Typography>
+          <Typography sx={{ color: 'grey.500' }}>ID: #{pothole.id}</Typography>
+        </Box>
+        <IconButton onClick={onClose} size="small">
+          <X style={{ width: 20, height: 20 }} />
+        </IconButton>
+      </Box>
 
-      <Card className="p-4 mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-red-500" />
-            <span>Severity Level</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${getSeverityColor(pothole.severity)}`}>
-              <span className="text-white">{pothole.severity}</span>
-            </div>
-            <Badge variant="outline">{getSeverityLabel(pothole.severity)}</Badge>
-          </div>
-        </div>
-        <Separator className="my-4" />
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Activity className="w-5 h-5 text-gray-500" />
-            <span className="text-gray-500">Status:</span>
-            <Badge variant="outline" className={getStatusColor(pothole.status)}>
-              {pothole.status.replace('-', ' ').toUpperCase()}
-            </Badge>
-          </div>
-          <div className="flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-gray-500" />
-            <span className="text-gray-500">Reported:</span>
-            <span>{new Date(pothole.dateReported).toLocaleDateString()}</span>
-          </div>
-        </div>
-      </Card>
-
-      <Card className="p-4 mb-6">
-        <div className="flex items-start gap-2 mb-3">
-          <MapPin className="w-5 h-5 text-gray-500 mt-1" />
-          <div>
-            <h3 className="mb-1">Location</h3>
-            <p className="text-gray-600">{pothole.position.address}</p>
-            <p className="text-gray-400 mt-1">
-              {pothole.position.lat.toFixed(6)}, {pothole.position.lng.toFixed(6)}
-            </p>
-          </div>
-        </div>
-      </Card>
-
-      <Card className="p-4 mb-6">
-        <h3 className="mb-4">Measurements</h3>
-        <div className="grid grid-cols-3 gap-4">
-          <div className="text-center p-3 bg-gray-50 rounded-lg">
-            <div className="text-gray-500 mb-1">Depth</div>
-            <div className="text-red-500">{pothole.measurements.depth} cm</div>
-          </div>
-          <div className="text-center p-3 bg-gray-50 rounded-lg">
-            <div className="text-gray-500 mb-1">Width</div>
-            <div className="text-red-500">{pothole.measurements.width} cm</div>
-          </div>
-          <div className="text-center p-3 bg-gray-50 rounded-lg">
-            <div className="text-gray-500 mb-1">Length</div>
-            <div className="text-red-500">{pothole.measurements.length} cm</div>
-          </div>
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <h3 className="mb-4">Images</h3>
-        <Tabs defaultValue="normal" className="w-full">
-          <TabsList className="w-full grid grid-cols-2">
-            <TabsTrigger value="normal">Normal View</TabsTrigger>
-            <TabsTrigger value="bird">Bird's Eye View</TabsTrigger>
-          </TabsList>
-          <TabsContent value="normal" className="mt-4">
-            <div className="relative rounded-lg overflow-hidden bg-gray-100">
-              <ImageWithFallback
-                src={pothole.images.normal}
-                alt="Normal view of pothole"
-                className="w-full h-64 object-cover"
+      <Card sx={{ p: 2, mb: 3 }}>
+        <CardContent sx={{ p: '0 !important' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <AlertCircle style={{ width: 20, height: 20, color: '#ef4444' }} />
+              <Typography>Severity Level</Typography>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Box
+                sx={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: '50%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  bgcolor: getSeverityColor(pothole.severity),
+                }}
+              >
+                <Typography sx={{ color: 'white', fontWeight: 600 }}>{pothole.severity}</Typography>
+              </Box>
+              <Chip
+                label={getSeverityLabel(pothole.severity)}
+                variant="outlined"
+                size="small"
+                sx={{ fontWeight: 500 }}
               />
-            </div>
-          </TabsContent>
-          <TabsContent value="bird" className="mt-4">
-            <div className="relative rounded-lg overflow-hidden bg-gray-100">
-              <ImageWithFallback
-                src={pothole.images.birdEye}
-                alt="Bird's eye view of pothole"
-                className="w-full h-64 object-cover"
+            </Box>
+          </Box>
+          <Divider sx={{ my: 2 }} />
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Activity style={{ width: 20, height: 20, color: '#6b7280' }} />
+              <Typography sx={{ color: 'grey.500' }}>Status:</Typography>
+              <Chip
+                label={pothole.status.replace('-', ' ').toUpperCase()}
+                variant="outlined"
+                size="small"
+                sx={{
+                  ...getStatusStyles(pothole.status),
+                  border: '1px solid',
+                  fontWeight: 500,
+                  fontSize: '0.75rem',
+                }}
               />
-            </div>
-          </TabsContent>
-        </Tabs>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Calendar style={{ width: 20, height: 20, color: '#6b7280' }} />
+              <Typography sx={{ color: 'grey.500' }}>Reported:</Typography>
+              <Typography>{new Date(pothole.dateReported).toLocaleDateString()}</Typography>
+            </Box>
+          </Box>
+        </CardContent>
       </Card>
-    </div>
+
+      <Card sx={{ p: 2, mb: 3 }}>
+        <CardContent sx={{ p: '0 !important' }}>
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 1.5 }}>
+            <MapPin style={{ width: 20, height: 20, color: '#6b7280', marginTop: 4 }} />
+            <Box>
+              <Typography variant="h3" component="h3" sx={{ mb: 0.5 }}>Location</Typography>
+              <Typography sx={{ color: 'grey.600' }}>{pothole.position.address}</Typography>
+              <Typography sx={{ color: 'grey.400', mt: 0.5, fontSize: '0.875rem' }}>
+                {pothole.position.lat.toFixed(6)}, {pothole.position.lng.toFixed(6)}
+              </Typography>
+            </Box>
+          </Box>
+        </CardContent>
+      </Card>
+
+      <Card sx={{ p: 2, mb: 3 }}>
+        <CardContent sx={{ p: '0 !important' }}>
+          <Typography variant="h3" component="h3" sx={{ mb: 2 }}>Measurements</Typography>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 2 }}>
+            <Box sx={{ textAlign: 'center', p: 1.5, bgcolor: 'grey.50', borderRadius: 2 }}>
+              <Typography sx={{ color: 'grey.500', mb: 0.5, fontSize: '0.875rem' }}>Depth</Typography>
+              <Typography sx={{ color: '#ef4444', fontWeight: 600 }}>{pothole.measurements.depth} cm</Typography>
+            </Box>
+            <Box sx={{ textAlign: 'center', p: 1.5, bgcolor: 'grey.50', borderRadius: 2 }}>
+              <Typography sx={{ color: 'grey.500', mb: 0.5, fontSize: '0.875rem' }}>Width</Typography>
+              <Typography sx={{ color: '#ef4444', fontWeight: 600 }}>{pothole.measurements.width} cm</Typography>
+            </Box>
+            <Box sx={{ textAlign: 'center', p: 1.5, bgcolor: 'grey.50', borderRadius: 2 }}>
+              <Typography sx={{ color: 'grey.500', mb: 0.5, fontSize: '0.875rem' }}>Length</Typography>
+              <Typography sx={{ color: '#ef4444', fontWeight: 600 }}>{pothole.measurements.length} cm</Typography>
+            </Box>
+          </Box>
+        </CardContent>
+      </Card>
+
+      <Card sx={{ p: 2 }}>
+        <CardContent sx={{ p: '0 !important' }}>
+          <Typography variant="h3" component="h3" sx={{ mb: 2 }}>Images</Typography>
+          <Box sx={{ width: '100%' }}>
+            <Box
+              sx={{
+                bgcolor: '#ececf0',
+                borderRadius: 3,
+                p: 0.5,
+                display: 'flex',
+                mb: 2,
+              }}
+            >
+              <Tabs
+                value={activeTab}
+                onChange={handleTabChange}
+                variant="fullWidth"
+                sx={{
+                  minHeight: 36,
+                  width: '100%',
+                  '& .MuiTabs-indicator': {
+                    display: 'none',
+                  },
+                  '& .MuiTab-root': {
+                    minHeight: 32,
+                    borderRadius: 2.5,
+                    flex: 1,
+                    color: 'text.primary',
+                    fontWeight: 500,
+                    fontSize: '0.875rem',
+                    textTransform: 'none',
+                    '&.Mui-selected': {
+                      bgcolor: 'background.paper',
+                      color: 'text.primary',
+                    },
+                  },
+                }}
+              >
+                <Tab label="Normal View" />
+                <Tab label="Bird's Eye View" />
+              </Tabs>
+            </Box>
+            <Box sx={{ mt: 2 }}>
+              {activeTab === 0 && (
+                <Box sx={{ position: 'relative', borderRadius: 2, overflow: 'hidden', bgcolor: 'grey.100' }}>
+                  <ImageWithFallback
+                    src={pothole.images.normal}
+                    alt="Normal view of pothole"
+                    style={{ width: '100%', height: 256, objectFit: 'cover' }}
+                  />
+                </Box>
+              )}
+              {activeTab === 1 && (
+                <Box sx={{ position: 'relative', borderRadius: 2, overflow: 'hidden', bgcolor: 'grey.100' }}>
+                  <ImageWithFallback
+                    src={pothole.images.birdEye}
+                    alt="Bird's eye view of pothole"
+                    style={{ width: '100%', height: 256, objectFit: 'cover' }}
+                  />
+                </Box>
+              )}
+            </Box>
+          </Box>
+        </CardContent>
+      </Card>
+    </Box>
   );
 }

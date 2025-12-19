@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ThemeRegistry } from "@/components/theme/ThemeRegistry";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,7 +23,9 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased">
-        {children}
+        <ThemeRegistry>
+          {children}
+        </ThemeRegistry>
       </body>
     </html>
   );
