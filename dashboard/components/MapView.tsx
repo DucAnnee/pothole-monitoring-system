@@ -28,7 +28,7 @@ export function MapView({
 
       if (mapRef.current && !mapInstanceRef.current) {
         // Initialize map centered on the potholes
-        const map = L.map(mapRef.current).setView([40.758, -73.9855], 14);
+        const map = L.map(mapRef.current).setView([10.7769, 106.7009], 13);
 
         // Add OpenStreetMap tiles
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {

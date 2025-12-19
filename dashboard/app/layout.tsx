@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ThemeRegistry } from "@/components/theme/ThemeRegistry";
+import { AuthProvider } from "@/components/auth/AuthContext";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -24,7 +25,9 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         <ThemeRegistry>
-          {children}
+          <AuthProvider>
+            {children}
+          </AuthProvider>
         </ThemeRegistry>
       </body>
     </html>
