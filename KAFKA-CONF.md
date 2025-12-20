@@ -1,38 +1,6 @@
-# ⭐ 1. TOPIC DEFINITIONS (FINAL)
+### 📋 Kafka Schemas
 
-| Topic                        | Purpose                    | Partition Key | Partitions |
-| ---------------------------- | -------------------------- | ------------- | ---------- |
-| `pothole.raw.events.v1`      | Edge → Kafka raw events    | `vehicle_id`  | 12         |
-| `pothole.ml.processed.v1`    | ML segmentation/depth      | `event_id`    | 24         |
-| `pothole.geo.enriched.v1`    | Ward/district/road mapping | `h3_index`    | 24         |
-| `pothole.cluster.updates.v1` | Stable pothole ID updates  | `pothole_id`  | 6          |
-| `pothole.alerts.v1`          | Severe potholes, warnings  | `pothole_id`  | 3          |
-
-DLQ topics:
-
-```
-pothole.raw.events.dlq.v1
-pothole.ml.processed.dlq.v1
-pothole.geo.enriched.dlq.v1
-```
-
----
-
-# ⭐ 2. AVRO SCHEMAS FOR EACH TOPIC
-
-Why Avro?
-
-* Strong typing
-* Schema evolution
-* Works with Schema Registry (Karapace, Redpanda)
-* Ensures producers/consumers stay compatible
-
----
-
-# 🟦 2.1 AVRO Schema: pothole.raw.events.v1
-
-**Filename: raw_events_v1.avsc**
-
+#### **1. pothole.raw.events.v1**
 ```json
 {
   "type": "record",
@@ -41,268 +9,237 @@ Why Avro?
   "fields": [
     {"name": "event_id", "type": "string"},
     {"name": "vehicle_id", "type": "string"},
-    {"name": "timestamp", "type": "string"}, 
+    {"name": "timestamp", "type": {"type": "long", "logicalType": "timestamp-millis"}},
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
     {"name": "image_path", "type": "string"},
-    {"name": "detection_confidence", "type": ["null","double"], "default": null}
+    {"name": "pothole_polygon", "type": "string"},
+    {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
 ```
-
-Partition key = `vehicle_id`
+**Partition key:** `vehicle_id` (12 partitions, good for load distribution)
 
 ---
 
-# 🟩 2.2 AVRO Schema: pothole.ml.processed.v1
-
-**Filename: processed_events_v1.avsc**
-
+#### **2. pothole.depth.v1** (NEW)
 ```json
 {
   "type": "record",
-  "name": "ProcessedEvent",
-  "namespace": "pothole.ml.v1",
+  "name": "DepthEstimate",
+  "namespace": "pothole.depth.v1",
   "fields": [
-    {"name": "processed_event_id", "type": "string"},
     {"name": "event_id", "type": "string"},
-    {"name": "gps_lat_corrected", "type": "double"},
-    {"name": "gps_lon_corrected", "type": "double"},
-    {"name": "depth_mm", "type": "double"},
-    {"name": "severity", "type": "string"},
-    {"name": "pothole_polygon", "type": "string"}, 
-    {"name": "processed_timestamp", "type": "string"}
+    {"name": "depth_cm", "type": "double"},
+    {"name": "confidence", "type": ["null", "double"], "default": null},
+    {"name": "processed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
   ]
 }
 ```
-
-Partition key = `event_id`
+**Partition key:** `event_id` (so aggregator can consume partitions aligned with other topics)
 
 ---
 
-# 🟨 2.3 AVRO Schema: pothole.geo.enriched.v1
-
-**Filename: geo_enriched_v1.avsc**
-
+#### **3. pothole.surface.area.v1** (NEW)
 ```json
 {
   "type": "record",
-  "name": "GeoEnrichedEvent",
-  "namespace": "pothole.geo.v1",
+  "name": "SurfaceAreaEstimate",
+  "namespace": "pothole.surface.v1",
   "fields": [
-    {"name": "processed_event_id", "type": "string"},
-    {"name": "pothole_id", "type": ["null", "string"], "default": null},
-    {"name": "ward", "type": "string"},
-    {"name": "district", "type": "string"},
-    {"name": "street_name", "type": "string"},
-    {"name": "road_id", "type": "string"},
-    {"name": "h3_index", "type": "long"},
-    {"name": "enriched_timestamp", "type": "string"}
+    {"name": "event_id", "type": "string"},
+    {"name": "surface_area_cm2", "type": "double"},
+    {"name": "confidence", "type": ["null", "double"], "default": null},
+    {"name": "processed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
   ]
 }
 ```
-
-Partition key = `h3_index`
+**Partition key:** `event_id`
 
 ---
 
-# 🟧 2.4 AVRO Schema: pothole.cluster.updates.v1
-
-**Filename: cluster_updates_v1.avsc**
-
+#### **4. pothole.severity.score.v1**
 ```json
 {
   "type": "record",
-  "name": "ClusterUpdate",
-  "namespace": "pothole.cluster.v1",
+  "name": "SeverityScore",
+  "namespace": "pothole.severity.v1",
   "fields": [
-    {"name": "pothole_id", "type": "string"},
-    {"name": "event_ids", "type": {"type": "array", "items": "string"}},
-    {"name": "first_detected_ts", "type": "string"},
-    {"name": "last_detected_ts", "type": "string"},
-    {"name": "severity", "type": "string"},
-    {"name": "depth_mm", "type": "double"},
-    {"name": "status", "type": "string"}, 
-    {"name": "pothole_polygon", "type": "string"}
+    {"name": "event_id", "type": "string"},
+    {"name": "depth_cm", "type": "double"},
+    {"name": "surface_area_cm2", "type": "double"},
+    {"name": "severity_score", "type": "double"},
+    {"name": "severity_level", "type": {"type": "enum", "name": "SeverityLevel", "symbols": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]}},
+    {"name": "calculated_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
   ]
 }
 ```
+**Partition key:** `event_id`
+**Notes:**
+- Added `severity_level` enum for easier filtering
+- Includes depth + surface_area so final enrichment service doesn't need to re-join
 
-Partition key = `pothole_id`
+## 📊 Topic Configuration Summary
 
----
+| Topic                         | Partitions | Key           | Retention | Compaction |
+|-------------------------------|------------|---------------|-----------|------------|
+| `pothole.raw.events.v1`       | 12         | `vehicle_id`  | 7 days    | Delete     |
+| `pothole.depth.v1`            | 12         | `event_id`    | 3 days    | Delete     |
+| `pothole.surface.area.v1`     | 12         | `event_id`    | 3 days    | Delete     |
+| `pothole.severity.score.v1`   | 12         | `event_id`    | 7 days    | Delete     |
 
-# ⭐ 3. KAFKA TOPIC CREATION COMMANDS
+DLQ topics:
 
-Assuming your Kafka broker is `kafka-1:9092`.
+```
+pothole.raw.events.dlq.v1
+pothole.depth.dlq.v1
+pothole.surface.area.dlq.v1
+pothole.severity.score.dlq.v1
+```
 
----
+**Why these retention periods?**
+- Raw events: 7 days (in case you need to reprocess)
+- Intermediate (depth/surface): 3 days (just for joins, then trash)
+- Severity: 7 days (final enrichment service might lag)
 
-# 🟦 3.1 Create Raw Events Topic
+## Core topics creation commands
+
+### 1. pothole.raw.events.v1
+
+7 days retention
 
 ```bash
-kafka-topics.sh --create \
-  --topic pothole.raw.events.v1 \
-  --partitions 12 \
-  --replication-factor 1 \
-  --bootstrap-server kafka-1:9092
+kafka-topics.sh --bootstrap-server localhost:9092 \
+--create \
+--topic pothole.raw.events.v1 \
+--partitions 12 \
+--replication-factor 3 \
+--config retention.ms=604800000 \
+--config cleanup.policy=delete
 ```
+
+Partition key
+`vehicle_id`
 
 ---
 
-# 🟩 3.2 Create ML Processed Topic
+### 2. pothole.depth.v1
+
+3 days retention
 
 ```bash
-kafka-topics.sh --create \
-  --topic pothole.ml.processed.v1 \
-  --partitions 24 \
-  --replication-factor 1 \
-  --bootstrap-server kafka-1:9092
+kafka-topics.sh --bootstrap-server localhost:9092 \
+--create \
+--topic pothole.depth.v1 \
+--partitions 12 \
+--replication-factor 3 \
+--config retention.ms=259200000 \
+--config cleanup.policy=delete
 ```
+
+Partition key
+`event_id`
 
 ---
 
-# 🟨 3.3 Create Geo Enriched Topic
+### 3. pothole.surface.area.v1
+
+3 days retention
 
 ```bash
-kafka-topics.sh --create \
-  --topic pothole.geo.enriched.v1 \
-  --partitions 24 \
-  --replication-factor 1 \
-  --bootstrap-server kafka-1:9092
+kafka-topics.sh --bootstrap-server localhost:9092 \
+--create \
+--topic pothole.surface.area.v1 \
+--partitions 12 \
+--replication-factor 3 \
+--config retention.ms=259200000 \
+--config cleanup.policy=delete
 ```
+
+Partition key
+`event_id`
 
 ---
 
-# 🟧 3.4 Create Cluster Updates Topic
+### 4. pothole.severity.score.v1
+
+7 days retention
 
 ```bash
-kafka-topics.sh --create \
-  --topic pothole.cluster.updates.v1 \
-  --partitions 6 \
-  --replication-factor 1 \
-  --bootstrap-server kafka-1:9092
+kafka-topics.sh --bootstrap-server localhost:9092 \
+--create \
+--topic pothole.severity.score.v1 \
+--partitions 12 \
+--replication-factor 3 \
+--config retention.ms=604800000 \
+--config cleanup.policy=delete
 ```
+
+Partition key
+`event_id`
 
 ---
 
-# 🟥 3.5 Create Alerts Topic
+## Dead Letter Queue topics
+
+These should be boring and forgiving. Same partitions for observability consistency. Retention usually longer so you can inspect failures.
+
+### pothole.raw.events.dlq.v1
+
+14 days retention recommended
 
 ```bash
-kafka-topics.sh --create \
-  --topic pothole.alerts.v1 \
-  --partitions 3 \
-  --replication-factor 1 \
-  --bootstrap-server kafka-1:9092
+kafka-topics.sh --bootstrap-server localhost:9092 \
+--create \
+--topic pothole.raw.events.dlq.v1 \
+--partitions 12 \
+--replication-factor 3 \
+--config retention.ms=1209600000 \
+--config cleanup.policy=delete
 ```
 
 ---
 
-# ⭐ 4. BEST PRACTICE: DLQ Topics
+### pothole.depth.dlq.v1
 
 ```bash
-kafka-topics.sh --create \
-  --topic pothole.raw.events.dlq.v1 \
-  --partitions 3 \
-  --replication-factor 1 \
-  --bootstrap-server kafka-1:9092
-```
-
-(similar for ML and GEO)
-
----
-
-# ⭐ 5. PYTHON PRODUCER EXAMPLE (RAW EVENTS)
-
-Using Avro + Confluent Kafka Python client + Schema Registry:
-
-```python
-from confluent_kafka import SerializingProducer
-from confluent_kafka.schema_registry.avro import AvroSerializer
-from uuid import uuid4
-import time
-
-producer_conf = {
-    "bootstrap.servers": "localhost:19092",
-    "key.serializer": str.encode,
-}
-
-schema_registry_conf = {"url": "http://localhost:8081"}
-schema_registry_client = SchemaRegistryClient(schema_registry_conf)
-
-raw_event_schema = """ <INSERT AVRO SCHEMA JSON HERE> """
-
-serializer = AvroSerializer(schema_registry_client, raw_event_schema)
-
-producer = SerializingProducer(producer_conf)
-
-event = {
-    "event_id": str(uuid4()),
-    "vehicle_id": "car-01",
-    "timestamp": str(time.time()),
-    "gps_lat": 10.123,
-    "gps_lon": 106.234,
-    "image_path": "s3://images/raw/xyz.jpg",
-}
-
-producer.produce(
-    topic="pothole.raw.events.v1",
-    key=event["vehicle_id"],
-    value=event,
-    value_serializer=serializer
-)
-
-producer.flush()
+kafka-topics.sh --bootstrap-server localhost:9092 \
+--create \
+--topic pothole.depth.dlq.v1 \
+--partitions 12 \
+--replication-factor 3 \
+--config retention.ms=1209600000 \
+--config cleanup.policy=delete
 ```
 
 ---
 
-# ⭐ 6. PYTHON CONSUMER EXAMPLE
+### pothole.surface.area.dlq.v1
 
-```python
-from confluent_kafka import DeserializingConsumer
-from confluent_kafka.schema_registry.avro import AvroDeserializer
-
-consumer_conf = {
-    "bootstrap.servers": "localhost:19092",
-    "group.id": "ml-processor",
-    "auto.offset.reset": "earliest",
-}
-
-schema_registry_client = SchemaRegistryClient({"url": "http://localhost:8081"})
-deserializer = AvroDeserializer(schema_registry_client)
-
-consumer = DeserializingConsumer({
-    **consumer_conf,
-    "value.deserializer": deserializer
-})
-
-consumer.subscribe(["pothole.raw.events.v1"])
-
-while True:
-    msg = consumer.poll(1)
-    if msg is None:
-        continue
-    print("Raw event:", msg.value())
+```bash
+kafka-topics.sh --bootstrap-server localhost:9092 \
+--create \
+--topic pothole.surface.area.dlq.v1 \
+--partitions 12 \
+--replication-factor 3 \
+--config retention.ms=1209600000 \
+--config cleanup.policy=delete
 ```
 
 ---
 
-# 🎉 Summary
+### pothole.severity.score.dlq.v1
 
-You now have:
+You had a typo in your list. I fixed it. DLQ topic **must not reuse the main topic name**.
 
-✔ Production-ready Kafka topic structure
-✔ Avro schemas for each event pipeline
-✔ Proper partitioning strategy
-✔ Topic creation commands
-✔ Python producer + consumer templates
+```bash
+kafka-topics.sh --bootstrap-server localhost:9092 \
+--create \
+--topic pothole.severity.score.dlq.v1 \
+--partitions 12 \
+--replication-factor 3 \
+--config retention.ms=1209600000 \
+--config cleanup.policy=delete
+```
 
-This fully supports:
-
-* High-throughput ingestion
-* ML event processing
-* Geo enrichment
-* Pothole clustering
-* Iceberg table ingestion

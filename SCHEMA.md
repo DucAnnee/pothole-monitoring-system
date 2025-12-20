@@ -4,187 +4,223 @@
 
 ### 🟦 **Table: `iceberg.city.raw_events`**
 
-| Column                 | Data Type | Description                                           |
-| ---------------------- | --------- | ----------------------------------------------------- |
-| `event_id`             | VARCHAR   | Unique event identifier                               |
-| `vehicle_id`           | VARCHAR   | Identifier of the vehicle generating the event        |
-| `created_at`           | TIMESTAMP | Original event timestamp from Kafka                   |
-| `gps_lat`              | DOUBLE    | Latitude reported by the device                       |
-| `gps_lon`              | DOUBLE    | Longitude reported by the device                      |
-| `gps_accuracy`         | DOUBLE    | Reported GPS accuracy in meters                       |
-| `raw_image_path`       | VARCHAR   | S3 URI of the event image                             |
-| `detection_confidence` | DOUBLE    | Model confidence score (optional)                     |
-| `ingested_at`          | TIMESTAMP | Timestamp when the event was ingested into this table |
+*(Raw ingestion metadata for each detected pothole event)*
+
+| Column                 | Data Type    | Description                                                          |
+| ---------------------- | ------------ | -------------------------------------------------------------------- |
+| `event_id`             | VARCHAR      | Unique event identifier                                              |
+| `vehicle_id`           | VARCHAR      | Vehicle identifier that generated the event                          |
+| `created_at`           | TIMESTAMP(3) | Event timestamp reported by the device                               |
+| `gps_lat`              | DOUBLE       | Latitude reported by the device                                      |
+| `gps_lon`              | DOUBLE       | Longitude reported by the device                                     |
+| `gps_accuracy`         | DOUBLE       | GPS accuracy in meters                                               |
+| `raw_image_path`       | VARCHAR      | S3 URI of the raw image (`s3://warehouse/raw_images/{event_id}.jpg`) |
+| `pothole_polygon`      | VARCHAR      | GeoJSON polygon extracted from edge detection                        |
+| `detection_confidence` | DOUBLE       | Edge detection model confidence score                                |
+| `ingested_at`          | TIMESTAMP(3) | Timestamp when the event was ingested into Iceberg                   |
 
 ---
 
-### 🟦 **Table: `iceberg.city.processed_events`**
+### 🟦 **Table: `iceberg.city.severity_scores`**
 
-| Column                   | Data Type | Description                                             |
-| ------------------------ | --------- | ------------------------------------------------------- |
-| `processed_event_id`     | VARCHAR   | Unique identifier for this processed event              |
-| `event_id`               | VARCHAR   | Reference to the raw event that produced this record    |
-| `created_at`             | TIMESTAMP | Timestamp when this event was processed                 |
-| `gps_lat_corrected`      | DOUBLE    | Corrected latitude after geospatial adjustment          |
-| `gps_lon_corrected`      | DOUBLE    | Corrected longitude after geospatial adjustment         |
-| `depth_mm`               | DOUBLE    | Estimated pothole depth in millimeters                  |
-| `severity`               | DOUBLE    | Severity index assigned by the model                    |
-| `pothole_polygon`        | VARCHAR   | GeoJSON polygon representing pothole boundary           |
-| `segmentation_mask_path` | VARCHAR   | S3 URI pointing to the segmentation mask file           |
-| `updated_at`             | TIMESTAMP | Time when the processed record was processed & ingested |
+*(Intermediate ML output for pothole severity calculation)*
+
+| Column             | Data Type    | Description                                             |
+| ------------------ | ------------ | ------------------------------------------------------- |
+| `event_id`         | VARCHAR      | Reference to the associated raw event                   |
+| `depth_cm`         | DOUBLE       | Estimated pothole depth in centimeters                  |
+| `surface_area_cm2` | DOUBLE       | Estimated pothole surface area in square centimeters    |
+| `severity_score`   | DOUBLE       | Calculated severity score                               |
+| `severity_level`   | VARCHAR      | Severity category (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`) |
+| `calculated_at`    | TIMESTAMP(3) | Timestamp when severity was calculated                  |
 
 ---
 
 ### 🟦 **Table: `iceberg.city.potholes`**
 
-*(Current state of each pothole)*
+*(Current authoritative state of each pothole)*
 
-| Column                   | Data Type | Description                                               |
-| ------------------------ | --------- | --------------------------------------------------------- |
-| `pothole_id`             | VARCHAR   | Unique identifier for this pothole instance               |
-| `reported_at`            | TIMESTAMP | Timestamp when the pothole was first reported or detected |
-| `in_progress_at`         | TIMESTAMP | Timestamp when repair work officially started             |
-| `fixed_at`               | TIMESTAMP | Timestamp when the pothole repair was completed           |
-| `gps_lat`                | DOUBLE    | Latitude of the pothole centroid                          |
-| `gps_lon`                | DOUBLE    | Longitude of the pothole centroid                         |
-| `depth_mm`               | DOUBLE    | Estimated pothole depth in millimeters                    |
-| `severity`               | DOUBLE    | Severity index                                            |
-| `pothole_polygon`        | VARCHAR   | GeoJSON polygon outlining the pothole boundary            |
-| `segmentation_mask_path` | VARCHAR   | S3 URI pointing to the segmentation mask file             |
-| `status`                 | VARCHAR   | Lifecycle status: reported, in_progress, fixed            |
-| `city`                   | VARCHAR   | City in which the pothole is located                      |
-| `ward`                   | VARCHAR   | Municipal ward identifier                                 |
-| `street_name`            | VARCHAR   | Street where the pothole is located                       |
-| `road_id`                | VARCHAR   | Road segment or asset identifier                          |
-| `geom_h3`                | BIGINT    | H3 index of pothole centroid for spatial indexing         |
+| Column              | Data Type    | Description                                           |
+| ------------------- | ------------ | ----------------------------------------------------- |
+| `pothole_id`        | VARCHAR      | Unique identifier for the pothole                     |
+| `first_event_id`    | VARCHAR      | Event that first detected this pothole                |
+| `reported_at`       | TIMESTAMP(3) | Timestamp of first detection                          |
+| `gps_lat`           | DOUBLE       | Latitude of the pothole centroid                      |
+| `gps_lon`           | DOUBLE       | Longitude of the pothole centroid                     |
+| `geom_h3`           | BIGINT       | H3 index for spatial indexing                         |
+| `city`              | VARCHAR      | City name                                             |
+| `ward`              | VARCHAR      | Ward identifier                                       |
+| `district`          | VARCHAR      | District name                                         |
+| `street_name`       | VARCHAR      | Street name                                           |
+| `road_id`           | VARCHAR      | Road or OSM way identifier                            |
+| `depth_cm`          | DOUBLE       | Latest estimated depth in centimeters                 |
+| `surface_area_cm2`  | DOUBLE       | Latest estimated surface area                         |
+| `severity_score`    | DOUBLE       | Latest severity score                                 |
+| `severity_level`    | VARCHAR      | Latest severity level                                 |
+| `pothole_polygon`   | VARCHAR      | Latest GeoJSON polygon                                |
+| `status`            | VARCHAR      | Lifecycle status (`reported`, `in_progress`, `fixed`) |
+| `in_progress_at`    | TIMESTAMP(3) | Timestamp when repair work started                    |
+| `fixed_at`          | TIMESTAMP(3) | Timestamp when repair was completed                   |
+| `last_updated_at`   | TIMESTAMP(3) | Timestamp of last update (UPSERT time)                |
+| `observation_count` | INTEGER      | Number of observations associated with this pothole   |
 
 ---
 
 ### 🟦 **Table: `iceberg.city.pothole_history`**
 
-*(Time-series evolution of each pothole)*
+*(Time series evolution of pothole properties)*
 
-| Column            | Data Type | Description                                                          |
-| ----------------- | --------- | -------------------------------------------------------------------- |
-| `observation_id`  | VARCHAR   | Unique identifier for this observation event                         |
-| `pothole_id`      | VARCHAR   | Identifier linking this record to the main potholes table            |
-| `event_id`        | VARCHAR   | ID of the raw or processed event that generated this observation     |
-| `recorded_at`     | TIMESTAMP | Timestamp when this pothole state was observed or recorded           |
-| `status`          | VARCHAR   | Lifecycle status at this time: reported, in_progress, fixed, expired |
-| `severity`        | DOUBLE    | Severity index at this point in time                                 |
-| `depth_mm`        | DOUBLE    | Estimated depth in millimeters at this event                         |
-| `pothole_polygon` | VARCHAR   | GeoJSON polygon of the pothole shape for this observation            |
-| `gps_lat`         | DOUBLE    | Latitude of the pothole centroid at this observation                 |
-| `gps_lon`         | DOUBLE    | Longitude of the pothole centroid at this observation                |
-| `geom_h3`         | BIGINT    | H3 index for spatial bucketing                                       |
+| Column             | Data Type    | Description                            |
+| ------------------ | ------------ | -------------------------------------- |
+| `observation_id`   | VARCHAR      | Unique identifier for this observation |
+| `pothole_id`       | VARCHAR      | Reference to the pothole               |
+| `event_id`         | VARCHAR      | Event that generated this observation  |
+| `recorded_at`      | TIMESTAMP(3) | Observation timestamp                  |
+| `depth_cm`         | DOUBLE       | Depth at this observation (cm)         |
+| `surface_area_cm2` | DOUBLE       | Surface area at this observation       |
+| `severity_score`   | DOUBLE       | Severity score at this observation     |
+| `severity_level`   | VARCHAR      | Severity level at this observation     |
+| `gps_lat`          | DOUBLE       | Latitude at this observation           |
+| `gps_lon`          | DOUBLE       | Longitude at this observation          |
+| `pothole_polygon`  | VARCHAR      | GeoJSON polygon at this observation    |
+| `status`           | VARCHAR      | Lifecycle status at this point in time |
 
+---
 
 ## 3. Trino SQL for creating tables:
 
-### raw_events
-
+#### **iceberg.city.raw_events**
 ```sql
 CREATE TABLE iceberg.city.raw_events (
-    event_id VARCHAR COMMENT 'Unique event identifier',
-    vehicle_id VARCHAR COMMENT 'Identifier of the vehicle generating the event',
-    created_at TIMESTAMP COMMENT 'Original event timestamp from Kafka',
-    gps_lat DOUBLE COMMENT 'Latitude reported by the device',
-    gps_lon DOUBLE COMMENT 'Longitude reported by the device',
-    gps_accuracy DOUBLE COMMENT 'Reported GPS accuracy in meters',
-    raw_image_path VARCHAR COMMENT 'S3 URI of the event image',
-    detection_confidence DOUBLE COMMENT 'Model confidence score (optional)',
-    ingested_at TIMESTAMP COMMENT 'Timestamp when the event was ingested into this table of the data lake'
+    event_id VARCHAR NOT NULL COMMENT 'Unique event identifier',
+    vehicle_id VARCHAR NOT NULL COMMENT 'Vehicle identifier',
+    created_at TIMESTAMP(3) NOT NULL COMMENT 'Event timestamp from device',
+    
+    gps_lat DOUBLE NOT NULL COMMENT 'Latitude',
+    gps_lon DOUBLE NOT NULL COMMENT 'Longitude',
+    gps_accuracy DOUBLE COMMENT 'GPS accuracy in meters',
+    
+    raw_image_path VARCHAR NOT NULL COMMENT 'S3 URI (s3://warehouse/raw_images/{event_id}.jpg)',
+    pothole_polygon VARCHAR NOT NULL COMMENT 'GeoJSON polygon from edge detection',
+    detection_confidence DOUBLE COMMENT 'Edge model confidence score',
+    
+    ingested_at TIMESTAMP(3) NOT NULL COMMENT 'When ingested into Iceberg'
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['day(timestamp)']
+    partitioning = ARRAY['day(created_at)']
 );
 ```
-### processed_events
+**Changes:**
+- ✅ Added `pothole_polygon` (from edge detection)
+- ✅ Changed all timestamps to `TIMESTAMP(3)` (millisecond precision)
+- ✅ Added NOT NULL constraints where appropriate
+
+---
+
+#### **iceberg.city.severity_scores**
 
 ```sql
-CREATE TABLE iceberg.city.processed_events (
-    processed_event_id VARCHAR COMMENT 'Unique identifier for this processed event',
-    event_id VARCHAR COMMENT 'Reference to the raw event that produced this record',
-    created_at TIMESTAMP COMMENT 'Timestamp when this event was processed',
+CREATE TABLE iceberg.city.severity_scores (
+    event_id VARCHAR NOT NULL COMMENT 'Links to raw_events',
     
-    gps_lat_corrected DOUBLE COMMENT 'Corrected latitude after geospatial adjustment',
-    gps_lon_corrected DOUBLE COMMENT 'Corrected longitude after geospatial adjustment',
+    depth_cm DOUBLE NOT NULL COMMENT 'Estimated depth in centimeters',
+    surface_area_cm2 DOUBLE NOT NULL COMMENT 'Estimated surface area',
+    severity_score DOUBLE NOT NULL COMMENT 'Calculated severity (0-1 scale?)',
+    severity_level VARCHAR NOT NULL COMMENT 'LOW/MEDIUM/HIGH/CRITICAL',
     
-    depth_mm DOUBLE COMMENT 'Estimated pothole depth in millimeters',
-    severity DOUBLE COMMENT 'Severity index assigned by the model',
-    
-    pothole_polygon VARCHAR COMMENT 'GeoJSON polygon representing pothole boundary',
-    segmentation_mask_path VARCHAR COMMENT 'S3 URI pointing to the segmentation mask file',
-    
-    updated_at TIMESTAMP COMMENT 'Time when the processed record was processed & ingested into this table of the data lake'
+    calculated_at TIMESTAMP(3) NOT NULL COMMENT 'When severity was calculated'
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['day(timestamp)']
+    partitioning = ARRAY['day(calculated_at)']
 );
 ```
+**Why this exists:** 
+- Keeps intermediate ML results for debugging
+- Can re-calculate severity without re-running depth/surface models
 
-### potholes
+---
 
+#### **iceberg.city.potholes** (Current State Table)
 ```sql
 CREATE TABLE iceberg.city.potholes (
-    pothole_id VARCHAR COMMENT 'Unique identifier for this pothole instance',
-
-    reported_at TIMESTAMP COMMENT 'Timestamp when the pothole was first reported or detected',
-    in_progress_at TIMESTAMP COMMENT 'Timestamp when repair work officially started',
-    fixed_at TIMESTAMP COMMENT 'Timestamp when the pothole repair was completed',
-
-    gps_lat DOUBLE COMMENT 'Latitude of the pothole centroid',
-    gps_lon DOUBLE COMMENT 'Longitude of the pothole centroid',
-
-    depth_mm DOUBLE COMMENT 'Estimated pothole depth in millimeters',
-    severity DOUBLE COMMENT 'Severity index',
-
-    pothole_polygon VARCHAR COMMENT 'GeoJSON polygon outlining the pothole boundary',
-    segmentation_mask_path VARCHAR COMMENT 'S3 URI pointing to the segmentation mask file',
-
-    status VARCHAR COMMENT 'Lifecycle status: reported, in_progress, fixed',
-
-    city VARCHAR COMMENT 'City in which the pothole is located',
-    ward VARCHAR COMMENT 'Municipal ward identifier',
-    street_name VARCHAR COMMENT 'Street where the pothole is located',
-    road_id VARCHAR COMMENT 'Road segment or asset identifier',
-
-    geom_h3 BIGINT COMMENT 'H3 index of pothole centroid for spatial indexing',
+    pothole_id VARCHAR NOT NULL COMMENT 'UUID for this pothole',
+    
+    -- First detection info
+    first_event_id VARCHAR NOT NULL COMMENT 'Event that first detected this pothole',
+    reported_at TIMESTAMP(3) NOT NULL COMMENT 'First detection timestamp',
+    
+    -- Location
+    gps_lat DOUBLE NOT NULL COMMENT 'Latitude',
+    gps_lon DOUBLE NOT NULL COMMENT 'Longitude',
+    geom_h3 BIGINT NOT NULL COMMENT 'H3 index (resolution 12?)',
+    
+    -- Address (from OpenStreetMap)
+    city VARCHAR COMMENT 'City name',
+    ward VARCHAR COMMENT 'Ward',
+    district VARCHAR COMMENT 'District',
+    street_name VARCHAR COMMENT 'Street name',
+    road_id VARCHAR COMMENT 'OSM way_id or road identifier',
+    
+    -- Physical properties (from latest observation)
+    depth_cm DOUBLE NOT NULL COMMENT 'Latest depth in centimeters',
+    surface_area_cm2 DOUBLE NOT NULL COMMENT 'Latest surface area',
+    severity_score DOUBLE NOT NULL COMMENT 'Latest severity',
+    severity_level VARCHAR NOT NULL COMMENT 'Latest severity level',
+    pothole_polygon VARCHAR NOT NULL COMMENT 'Latest GeoJSON polygon',
+    
+    -- Lifecycle
+    status VARCHAR NOT NULL COMMENT 'reported | in_progress | fixed',
+    in_progress_at TIMESTAMP(3) COMMENT 'When repair started',
+    fixed_at TIMESTAMP(3) COMMENT 'When repair completed',
+    
+    -- Metadata
+    last_updated_at TIMESTAMP(3) NOT NULL COMMENT 'Last UPSERT timestamp',
+    observation_count INTEGER NOT NULL COMMENT 'How many times we seen this pothole'
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['ward']
+    partitioning = ARRAY['ward', 'month(reported_at)']
 );
 ```
+**Key changes:**
+- ✅ Added `first_event_id` to trace back to original detection
+- ✅ Added `observation_count` (how many times vehicle passed by)
+- ✅ Partitioned by `ward` + `month(reported_at)` (better for querying by location + time)
+- ✅ Removed `segmentation_mask_path` (you can reconstruct from `raw_image_path` if needed)
 
-### pothole_history
+---
 
+#### **iceberg.city.pothole_history** (Time Series)
 ```sql
 CREATE TABLE iceberg.city.pothole_history (
-    observation_id VARCHAR COMMENT 'Unique identifier for this observation event',
+    observation_id VARCHAR NOT NULL COMMENT 'UUID for this observation',
+    pothole_id VARCHAR NOT NULL COMMENT 'Links to potholes table',
+    event_id VARCHAR NOT NULL COMMENT 'Links to raw_events',
     
-    pothole_id VARCHAR COMMENT 'Identifier linking this record to a pothole in the main table',
-
-    event_id VARCHAR COMMENT 'ID of the raw or processed event that generated this observation',
+    recorded_at TIMESTAMP(3) NOT NULL COMMENT 'Observation timestamp',
     
-    recorded_at TIMESTAMP COMMENT 'Timestamp when this pothole state was observed or recorded',
-
-    status VARCHAR COMMENT 'Lifecycle status at this time: reported, in_progress, fixed, expired',
-
-    severity DOUBLE COMMENT 'Severity index at this point in time',
-    depth_mm DOUBLE COMMENT 'Estimated depth in millimeters at this event',
-
-    pothole_polygon VARCHAR COMMENT 'GeoJSON polygon of pothole shape at this observation',
+    -- Physical properties at this time
+    depth_cm DOUBLE NOT NULL COMMENT 'Depth at observation (cm)',
+    surface_area_cm2 DOUBLE NOT NULL COMMENT 'Surface area at observation',
+    severity_score DOUBLE NOT NULL COMMENT 'Severity at observation',
+    severity_level VARCHAR NOT NULL COMMENT 'Severity level at observation',
     
-    gps_lat DOUBLE COMMENT 'Latitude of the pothole centroid at this observation',
-    gps_lon DOUBLE COMMENT 'Longitude of the pothole centroid at this observation',
-    geom_h3 BIGINT COMMENT 'H3 index for spatial bucketing',
+    gps_lat DOUBLE NOT NULL COMMENT 'Lat at observation',
+    gps_lon DOUBLE NOT NULL COMMENT 'Lon at observation',
+    pothole_polygon VARCHAR NOT NULL COMMENT 'Polygon at observation',
+    
+    -- Lifecycle
+    status VARCHAR NOT NULL COMMENT 'Status at this observation'
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['day(recorded_at)']
+    partitioning = ARRAY['day(recorded_at)', 'pothole_id']
 );
-
 ```
+
+**Why partition by `pothole_id`?**
+- Queries like "show me history of pothole XYZ" become fast
+- Trade-off: many small files if you have 10k potholes
+
