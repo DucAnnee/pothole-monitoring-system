@@ -47,3 +47,7 @@ container-data
 node_modules
 
 decoded_output
+
+
+# edge testing video
+edge\inputs

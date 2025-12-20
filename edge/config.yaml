@@ -1,0 +1,72 @@
+# ============================================================================
+# POTHOLE DETECTION AND AREA ESTIMATION - CONFIGURATION
+# ============================================================================
+# This file contains all configurable parameters for the pothole detection system.
+# Modify values here without changing any code.
+
+# Model Selection: "yolo" or "rfdetr"
+model_type: "yolo"
+
+# Video and Model Paths
+video:
+  input_path: "images/test_1.mp4"
+
+models:
+  yolo:
+    weights_path: "model/yolov11s.pt"
+    confidence_threshold: 0.25
+  rfdetr:
+    weights_path: "model/rtdetr-seg.pt"
+    confidence_threshold: 0.25
+
+# Detection Region Configuration
+detection_region:
+  # Trapezoid coordinates in reference resolution (pixels)
+  trapezoid_coords:
+    - [1549, 1238]  # Top-Left
+    - [1951, 1252]  # Top-Right
+    - [2479, 1722]  # Bottom-Right
+    - [1251, 1694]  # Bottom-Left
+  
+  # Reference resolution where trapezoid was defined (width, height)
+  reference_resolution: [3840, 2160]
+
+# Real-World Calibration (Bird's Eye View Rectangle in cm)
+bev_calibration:
+  rectangle_coords:
+    - [0, 1000]    # Top-Left (cm)
+    - [250, 1000]  # Top-Right (cm)
+    - [250, 0]     # Bottom-Right (cm)
+    - [0, 0]       # Bottom-Left (cm)
+
+# Camera Calibration
+camera:
+  calibration_file: "outputs/camera_calibration.json"
+
+# Output Directories
+output:
+  segmentation_dir: "outputs/segmented_frames"
+  area_estimation_dir: "outputs/area_results"
+  # Separate directories for RF-DETR (when using RF-DETR model)
+  segmentation_dir_rfdetr: "outputs/segmented_frames_rfdetr"
+  area_estimation_dir_rfdetr: "outputs/area_results_rfdetr"
+
+# Processing Parameters
+processing:
+  frame_interval: 30  # Process every Nth frame (sampling rate)
+  enable_display: true  # Show real-time visualization window
+  display_window_name: "Pothole Detection"
+
+# Optional: API Endpoints (for future cloud integration)
+# api:
+#   endpoint: "https://api.example.com/potholes"
+#   api_key: "${POTHOLE_API_KEY}"  # Use environment variable
+#   timeout: 30
+
+# Optional: Database Credentials (for future database integration)
+# database:
+#   host: "localhost"
+#   port: 5432
+#   name: "pothole_db"
+#   user: "${DB_USER}"  # Use environment variable
+#   password: "${DB_PASSWORD}"  # Use environment variable

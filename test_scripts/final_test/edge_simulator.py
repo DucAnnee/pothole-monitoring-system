@@ -68,27 +68,27 @@ def connect_minio(max_retries=5, delay=2):
                 MINIO_ENDPOINT,
                 access_key=MINIO_ACCESS_KEY,
                 secret_key=MINIO_SECRET_KEY,
-                secure=False
+                secure=False,
             )
-            
+
             # Ensure bucket exists
             if not client.bucket_exists(BUCKET):
                 client.make_bucket(BUCKET)
                 print(f"[SUCCESS] Created MinIO bucket: {BUCKET}")
             else:
                 print(f"[SUCCESS] Connected to MinIO bucket: {BUCKET}")
-            
+
             return client
-            
+
         except S3Error as e:
             print(f"[ERROR] MinIO S3 error: {e}")
         except Exception as e:
             print(f"[ERROR] MinIO connection failed: {e}")
-        
+
         if attempt < max_retries:
             print(f"[INFO] Retrying in {delay} seconds...")
             time.sleep(delay)
-    
+
     print("[FATAL] Could not connect to MinIO after multiple attempts.")
     return None
 
@@ -96,7 +96,7 @@ def connect_minio(max_retries=5, delay=2):
 def upload_image_to_minio(client, image_bytes, event_id):
     """Upload image to MinIO and return S3 path."""
     object_name = f"{MINIO_PREFIX}/{event_id}.jpg"
-    
+
     try:
         client.put_object(
             bucket_name=BUCKET,
@@ -105,11 +105,11 @@ def upload_image_to_minio(client, image_bytes, event_id):
             length=len(image_bytes),
             content_type="image/jpeg",
         )
-        
+
         s3_path = f"s3://{BUCKET}/{object_name}"
         print(f"[SUCCESS] Uploaded image to {s3_path}")
         return s3_path
-        
+
     except Exception as e:
         print(f"[ERROR] Failed uploading to MinIO: {e}")
         return None
@@ -139,13 +139,13 @@ def create_kafka_producer(max_retries=5, delay=2):
             producer = Producer(producer_conf)
             print("[SUCCESS] Connected to Kafka brokers.")
             return producer
-            
+
         except Exception as e:
             print(f"[ERROR] Kafka connection failed: {e}")
             if attempt < max_retries:
                 print(f"[INFO] Retrying in {delay} seconds...")
                 time.sleep(delay)
-    
+
     print("[FATAL] Could not connect to Kafka after multiple attempts.")
     return None
 
@@ -159,13 +159,13 @@ def create_schema_registry_client(max_retries=5, delay=2):
             client = SchemaRegistryClient(schema_registry_conf)
             print("[SUCCESS] Connected to Schema Registry.")
             return client
-            
+
         except Exception as e:
             print(f"[ERROR] Schema Registry connection failed: {e}")
             if attempt < max_retries:
                 print(f"[INFO] Retrying in {delay} seconds...")
                 time.sleep(delay)
-    
+
     print("[FATAL] Could not connect to Schema Registry after multiple attempts.")
     return None
 
@@ -184,18 +184,20 @@ def generate_pothole_polygon(center_lat, center_lon):
     """Generate a dummy GeoJSON polygon around the GPS coordinates."""
     # Create a small polygon (~1-2 meter radius) around the center point
     offset = 0.00002  # Approx 2 meters in degrees
-    
+
     polygon = {
         "type": "Polygon",
-        "coordinates": [[
-            [center_lon - offset, center_lat - offset],
-            [center_lon + offset, center_lat - offset],
-            [center_lon + offset, center_lat + offset],
-            [center_lon - offset, center_lat + offset],
-            [center_lon - offset, center_lat - offset]  # Close the polygon
-        ]]
+        "coordinates": [
+            [
+                [center_lon - offset, center_lat - offset],
+                [center_lon + offset, center_lat - offset],
+                [center_lon + offset, center_lat + offset],
+                [center_lon - offset, center_lat + offset],
+                [center_lon - offset, center_lat - offset],  # Close the polygon
+            ]
+        ],
     }
-    
+
     return json.dumps(polygon)
 
 
@@ -216,60 +218,64 @@ def main():
     print("=" * 70)
     print("POTHOLE DETECTION EDGE DEVICE SIMULATOR")
     print("=" * 70)
-    
+
     # Load image once (reuse for all simulated captures)
     image_bytes = load_image()
     if image_bytes is None:
         return
-    
+
     # Connect to MinIO
     minio_client = connect_minio()
     if minio_client is None:
         return
-    
+
     # Connect to Kafka
     producer = create_kafka_producer()
     if producer is None:
         return
-    
+
     # Connect to Schema Registry
     schema_registry_client = create_schema_registry_client()
     if schema_registry_client is None:
         return
-    
+
     # Create Avro serializer
     avro_serializer = AvroSerializer(
         schema_registry_client,
         RAW_EVENT_SCHEMA_STR,
         lambda obj, ctx: obj,  # dict passthrough
     )
-    
+
     vehicle_id = f"vehicle-{uuid4().hex[:8]}"
     print(f"\n[INFO] Simulating vehicle: {vehicle_id}")
     print(f"[INFO] Sending 1 event per 10 seconds. Press Ctrl+C to stop.\n")
-    
+
     try:
         while True:
             # Generate event data
             event_id = str(uuid4())
             gps_lat, gps_lon = generate_random_hcm_gps()
-            timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)  # timestamp-millis
-            
+            timestamp_ms = int(
+                datetime.now(timezone.utc).timestamp() * 1000
+            )  # timestamp-millis
+
             print(f"\n{'='*70}")
             print(f"[EVENT] ID: {event_id}")
             print(f"[GPS] Lat: {gps_lat:.6f}, Lon: {gps_lon:.6f}")
-            print(f"[TIME] {datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()}")
-            
+            print(
+                f"[TIME] {datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()}"
+            )
+
             # Upload image to MinIO
             s3_path = upload_image_to_minio(minio_client, image_bytes, event_id)
             if s3_path is None:
                 print("[WARN] Skipping Kafka publish due to MinIO failure.")
                 time.sleep(10)
                 continue
-            
+
             # Generate dummy pothole polygon
             pothole_polygon = generate_pothole_polygon(gps_lat, gps_lon)
-            
+
             # Create Avro record
             raw_event = {
                 "event_id": event_id,
@@ -282,13 +288,13 @@ def main():
                 "pothole_polygon": pothole_polygon,
                 "detection_confidence": random.uniform(0.85, 0.99),
             }
-            
+
             # Serialize with Avro + Schema Registry
             serialized_value = avro_serializer(
                 raw_event,
                 SerializationContext(TOPIC, MessageField.VALUE),
             )
-            
+
             # Produce to Kafka
             producer.produce(
                 topic=TOPIC,
@@ -296,16 +302,16 @@ def main():
                 value=serialized_value,
                 on_delivery=delivery_report,
             )
-            
+
             producer.poll(0)
             producer.flush()
-            
+
             print(f"[INFO] Waiting 10 seconds for next event...")
             time.sleep(10)
-            
+
     except KeyboardInterrupt:
         print("\n\n[INFO] Stopped by user.")
-    
+
     finally:
         print("[INFO] Flushing Kafka producer...")
         producer.flush()
