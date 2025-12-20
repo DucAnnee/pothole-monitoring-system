@@ -2,60 +2,56 @@
 # POTHOLE DETECTION AND AREA ESTIMATION - CONFIGURATION
 # ============================================================================
 # This file contains all configurable parameters for the pothole detection system.
-# Modify values here without changing any code.
 
-# Model Selection: "yolo" or "rfdetr"
+# Model selection: "yolo" | "rfdetr"
 model_type: "yolo"
 
-# Video and Model Paths
+# Video and Model paths
 video:
-  input_path: "images/test_1.mp4"
+  input_path: "assets/test_1.mp4"
 
-models:
+models: 
   yolo:
-    weights_path: "model/yolov11s.pt"
+    weights_path: "models/yolo11s.pt"
     confidence_threshold: 0.25
   rfdetr:
-    weights_path: "model/rtdetr-seg.pt"
+    weights_path: "models/rfdetr.pth"
     confidence_threshold: 0.25
 
-# Detection Region Configuration
+# Detection region mask
 detection_region:
-  # Trapezoid coordinates in reference resolution (pixels)
+  # Trapezoid coordinates in reference resolution.
   trapezoid_coords:
-    - [1549, 1238]  # Top-Left
-    - [1951, 1252]  # Top-Right
-    - [2479, 1722]  # Bottom-Right
-    - [1251, 1694]  # Bottom-Left
-  
-  # Reference resolution where trapezoid was defined (width, height)
-  reference_resolution: [3840, 2160]
+    - [0.4034, 0.5731]  # Top-Left
+    - [0.5081, 0.5796]  # Top-Right
+    - [0.6456, 0.7972]  # Bottom-Right
+    - [0.3268, 0.7843]  # Bottom-Left
 
-# Real-World Calibration (Bird's Eye View Rectangle in cm)
+# Real-world calibration (Bird's eye view rectangle in cm)
 bev_calibration:
-  rectangle_coords:
-    - [0, 1000]    # Top-Left (cm)
-    - [250, 1000]  # Top-Right (cm)
-    - [250, 0]     # Bottom-Right (cm)
-    - [0, 0]       # Bottom-Left (cm)
+  rectangle_coords: # in cm
+    - [0, 1000]    # Top-Left 
+    - [250, 1000]  # Top-Right 
+    - [250, 0]     # Bottom-Right 
+    - [0, 0]       # Bottom-Left 
 
-# Camera Calibration
+# Camera calibration
 camera:
-  calibration_file: "outputs/camera_calibration.json"
+  calibration_file: ".conf/camera_calibration.json"
 
-# Output Directories
+# Output directories
 output:
-  segmentation_dir: "outputs/segmented_frames"
-  area_estimation_dir: "outputs/area_results"
+  segmentation_dir: "segmentation/results"
+  area_estimation_dir: "surface_area/results"
   # Separate directories for RF-DETR (when using RF-DETR model)
-  segmentation_dir_rfdetr: "outputs/segmented_frames_rfdetr"
-  area_estimation_dir_rfdetr: "outputs/area_results_rfdetr"
+  segmentation_dir_rfdetr: "segmentation/results_rfdetr"
+  area_estimation_dir_rfdetr: "surface_area/results_rfdetr"
 
-# Processing Parameters
+# Processing parameters
 processing:
-  frame_interval: 30  # Process every Nth frame (sampling rate)
+  frame_interval: 5  # Sampling rate
   enable_display: true  # Show real-time visualization window
-  display_window_name: "Pothole Detection"
+  display_window_name: "Pothole Segmentation"
 
 # Optional: API Endpoints (for future cloud integration)
 # api:

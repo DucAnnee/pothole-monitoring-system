@@ -1,9 +1,8 @@
 import argparse
-from segmentation.pothole_segmentation import (
+from segmentation import (
     PotholeSegmentationYOLO,
-    PotholeSegmentationRFDETR,
 )
-from surface_area.pothole_area_estimator import PotholeAreaEstimator
+from surface_area import PotholeAreaEstimator
 from config_loader import load_config
 
 
@@ -40,28 +39,32 @@ def main():
     output_dirs = config.get_output_dirs()
 
     if model_type == "yolo":
-        segmenter = PotholeSegmentation(
+        segmenter = PotholeSegmentationYOLO(
             model_path=config.get_model_path(),
             trapezoid_coords=config.get_trapezoid_coords(),
-            reference_resolution=config.get_reference_resolution(),
             confidence_threshold=config.get_confidence_threshold(),
             frame_interval=config.get_frame_interval(),
         )
     elif model_type == "rfdetr":
-        segmenter = PotholeSegmentationRFDETR(
-            model_path=config.get_model_path(),
-            trapezoid_coords=config.get_trapezoid_coords(),
-            reference_resolution=config.get_reference_resolution(),
-            confidence_threshold=config.get_confidence_threshold(),
-            frame_interval=config.get_frame_interval(),
-        )
+        raise NotImplementedError("RFDETR model is not implemented yet.")
+        # segmenter = PotholeSegmentationRFDETR(
+        #     model_path=config.get_model_path(),
+        #     trapezoid_coords=config.get_trapezoid_coords(),
+        #     reference_resolution=config.get_reference_resolution(),
+        #     confidence_threshold=config.get_confidence_threshold(),
+        #     frame_interval=config.get_frame_interval(),
+        # )
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-    num_frames_detected = segmenter.process_video(
-        video_path=config.get_video_path(),
-        output_dir=output_dirs["segmentation"],
-    )
+    try:
+        num_frames_detected = segmenter.process_video(
+            video_path=config.get_video_path(),
+            output_dir=output_dirs["segmentation"],
+        )
+    except ValueError as e:  # no video path provided or could not open video
+        print(e)
+        return
 
     if num_frames_detected == 0:
         print("\n⚠ No potholes detected in video. Exiting.")
@@ -78,7 +81,6 @@ def main():
     estimator = PotholeAreaEstimator(
         trapezoid_coords=config.get_trapezoid_coords(),
         rectangle_coords=config.get_rectangle_coords(),
-        reference_resolution=config.get_reference_resolution(),
         calibration_path=config.get_calibration_path(),
     )
 

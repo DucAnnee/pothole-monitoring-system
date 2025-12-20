@@ -10,7 +10,6 @@ class PotholeAreaEstimator:
         self,
         trapezoid_coords,
         rectangle_coords,
-        reference_resolution=None,
         calibration_path="outputs/camera_calibration.json",
     ):
         """
@@ -19,21 +18,13 @@ class PotholeAreaEstimator:
         Args:
             trapezoid_coords: np.array of shape (4, 2) - detection region coordinates
             rectangle_coords: np.array of shape (4, 2) - BEV rectangle template (in cm)
-            reference_resolution: (width, height) tuple of the resolution where trapezoid was defined.
-                                  If None, trapezoid_coords are treated as normalized [0,1] coordinates.
             calibration_path: Path to camera calibration JSON
         """
         self.rectangle_coords = rectangle_coords
         self.calibration_path = calibration_path
 
-        # Normalize trapezoid coordinates to [0, 1] range
-        if reference_resolution is not None:
-            # Trapezoid coords are in pixel space, normalize them
-            ref_w, ref_h = reference_resolution
-            self.normalized_trapezoid = trapezoid_coords / np.array([ref_w, ref_h])
-        else:
-            # Already normalized
-            self.normalized_trapezoid = trapezoid_coords.astype(np.float32)
+        # Load the normalized trapezoid coordinates
+        self.normalized_trapezoid = trapezoid_coords.astype(np.float32)
 
         # Load camera calibration
         self.camera_matrix, self.dist_coeffs = self.load_camera_calibration()
@@ -160,13 +151,13 @@ class PotholeAreaEstimator:
 
         return area_cm2, bev_img, H
 
-    def process_image_with_mask(self, image_path, mask_path, output_dir):
+    def process_image_with_mask(self, image_path, mask_coords, output_dir):
         """
         Process a single image with its pothole mask and save results.
 
         Args:
             image_path: Path to the input image
-            mask_path: Path to the numpy file containing pothole mask
+            mask_coords: List of coordinate of the pothole mask
             output_dir: Directory to save results
 
         Returns: area_cm2
@@ -178,13 +169,13 @@ class PotholeAreaEstimator:
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         # Load pothole mask
-        pothole_mask = np.load(mask_path, allow_pickle=True)
+        pothole_mask = np.asarray(mask_coords)
 
         # Compute area
         area_cm2, bev_img, H = self.compute_pothole_area(img_rgb, pothole_mask)
 
         # Create output filename based on mask filename (preserves pothole index)
-        mask_base_name = os.path.splitext(os.path.basename(mask_path))[0]
+        mask_base_name = os.path.splitext(os.path.basename(image_path))[0]
         # Remove "_mask_0" suffix and add "_pothole_0" for clarity
         # e.g., "frame_000030_timestamp_mask_0" -> "frame_000030_timestamp_pothole_0"
         if "_mask_" in mask_base_name:
@@ -213,12 +204,15 @@ class PotholeAreaEstimator:
         Process all images and their corresponding masks in a directory.
 
         Args:
-            input_dir: Directory containing images and .npy mask files
+            input_dir: Directory containing images and the corresponding .json mask files
             output_dir: Directory to save results
         """
         os.makedirs(output_dir, exist_ok=True)
 
-        # Find all image files with corresponding .npy masks
+        # Store the name to delete later
+        processed_filenames = []
+
+        # Find all image files with its corresponding .json masks
         processed_count = 0
         total_area = 0
 
@@ -226,28 +220,27 @@ class PotholeAreaEstimator:
             if filename.endswith((".jpg", ".png", ".jpeg")):
                 image_path = os.path.join(input_dir, filename)
                 base_name = os.path.splitext(filename)[0]
+                mask_file = os.path.join(input_dir, base_name + "_mask.json")
 
-                # Find all masks for this image (e.g., base_name_mask_0.npy, base_name_mask_1.npy)
-                import glob
+                if os.path.exists(mask_file):
+                    with open(mask_file, "r") as f:
+                        # List of {"conf": float, "coordinates": [[x,y], ...]}
+                        masks = json.load(f)
 
-                mask_pattern = os.path.join(input_dir, f"{base_name}_mask_*.npy")
-                mask_files = glob.glob(mask_pattern)
+                    for mask_data in masks:
+                        # conf = mask_data["conf"]
+                        mask_coords = mask_data["coordinates"]
 
-                if mask_files:
-                    # Process each mask for this image
-                    for mask_path in sorted(mask_files):
                         try:
                             area = self.process_image_with_mask(
-                                image_path, mask_path, output_dir
+                                image_path, mask_coords, output_dir
                             )
-                            processed_count += 1
                             total_area += area
+                            processed_count += 1
                         except Exception as e:
-                            print(
-                                f"✗ Error processing {os.path.basename(mask_path)}: {e}"
-                            )
-                else:
-                    print(f"⚠ Skipping {filename}: No mask files found")
+                            print(f"✗ Error processing mask from {filename}: {e}")
+                    processed_filenames.append(filename)
+                    processed_filenames.append(os.path.basename(mask_file))
 
         print(f"\n{'='*50}")
         print(f"Batch processing complete!")
@@ -256,4 +249,21 @@ class PotholeAreaEstimator:
         print(f"Results saved to: {output_dir}")
         print(f"{'='*50}")
 
+        # delete processed files to save space
+        print("\nDeleting processed files to save space...")
+        self.delete_processed(processed_filenames, input_dir)
+
         return processed_count, total_area
+
+    def delete_processed(self, filenames: list, dir: str):
+        """
+        Delete processed files to save space.
+
+        Args:
+            filenames: List of file names to delete
+            dir: Directory where files are located
+        """
+        for filename in filenames:
+            file_path = os.path.join(dir, filename)
+            if os.path.exists(file_path):
+                os.remove(file_path)

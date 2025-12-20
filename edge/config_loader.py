@@ -1,7 +1,7 @@
+from typing import Any, Dict
 import yaml
 import os
 import numpy as np
-from pathlib import Path
 
 
 class ConfigLoader:
@@ -18,10 +18,10 @@ class ConfigLoader:
             config_path: Path to YAML configuration file
         """
         self.config_path = config_path
-        self.config = self._load_config()
+        self.config: Dict[str, Any] = self._load_config()
         self._validate_config()
 
-    def _load_config(self):
+    def _load_config(self) -> Dict[str, Any]:
         """Load YAML configuration file"""
         if not os.path.exists(self.config_path):
             raise FileNotFoundError(
@@ -37,7 +37,7 @@ class ConfigLoader:
 
         return config
 
-    def _substitute_env_vars(self, config):
+    def _substitute_env_vars(self, config) -> Any:
         """
         Recursively substitute environment variables in config.
         Format: ${VAR_NAME} or ${VAR_NAME:default_value}
@@ -85,40 +85,39 @@ class ConfigLoader:
     # Convenience getters for accessing configuration values
     # ========================================================================
 
-    def get_model_type(self):
+    def get_model_type(self) -> str:
         """Get selected model type"""
         return self.config["model_type"]
 
-    def get_video_path(self):
+    def get_video_path(self) -> str | None:
         """Get video input path"""
-        return self.config["video"]["input_path"]
+        return (
+            self.config["video"]["input_path"]
+            if "input_path" in self.config["video"]
+            else None
+        )
 
-    def get_model_config(self):
+    def get_model_config(self) -> dict:
         """Get configuration for the selected model"""
         model_type = self.get_model_type()
         return self.config["models"][model_type]
 
-    def get_model_path(self):
+    def get_model_path(self) -> str:
         """Get model weights path"""
         model_config = self.get_model_config()
         return model_config["weights_path"]
 
-    def get_confidence_threshold(self):
+    def get_confidence_threshold(self) -> float:
         """Get confidence threshold for the selected model"""
         model_config = self.get_model_config()
         return model_config.get("confidence_threshold", 0.25)
 
-    def get_trapezoid_coords(self):
+    def get_trapezoid_coords(self) -> np.ndarray:
         """Get trapezoid coordinates as numpy array"""
         coords = self.config["detection_region"]["trapezoid_coords"]
         return np.array(coords, dtype=np.float32)
 
-    def get_reference_resolution(self):
-        """Get reference resolution as tuple (width, height)"""
-        res = self.config["detection_region"]["reference_resolution"]
-        return tuple(res)
-
-    def get_rectangle_coords(self):
+    def get_rectangle_coords(self) -> np.ndarray:
         """Get BEV rectangle coordinates as numpy array"""
         coords = self.config["bev_calibration"]["rectangle_coords"]
         return np.array(coords, dtype=np.float32)
@@ -127,7 +126,7 @@ class ConfigLoader:
         """Get camera calibration file path"""
         return self.config["camera"]["calibration_file"]
 
-    def get_output_dirs(self):
+    def get_output_dirs(self) -> dict:
         """Get output directories based on selected model"""
         model_type = self.get_model_type()
         output = self.config["output"]
@@ -143,15 +142,15 @@ class ConfigLoader:
                 "area_estimation": output["area_estimation_dir"],
             }
 
-    def get_frame_interval(self):
+    def get_frame_interval(self) -> int:
         """Get frame sampling interval"""
         return self.config["processing"]["frame_interval"]
 
-    def get_display_enabled(self):
+    def get_display_enabled(self) -> bool:
         """Check if real-time display is enabled"""
         return self.config["processing"].get("enable_display", True)
 
-    def get_display_window_name(self):
+    def get_display_window_name(self) -> str:
         """Get display window name"""
         return self.config["processing"].get("display_window_name", "Pothole Detection")
 
@@ -173,7 +172,6 @@ class ConfigLoader:
         print(f"Video Path: {self.get_video_path()}")
         print(f"Confidence Threshold: {self.get_confidence_threshold()}")
         print(f"Frame Interval: {self.get_frame_interval()}")
-        print(f"Reference Resolution: {self.get_reference_resolution()}")
         print(f"Calibration File: {self.get_calibration_path()}")
 
         output_dirs = self.get_output_dirs()

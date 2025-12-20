@@ -1,16 +1,16 @@
 import cv2
 import numpy as np
 import os
+import json
 from datetime import datetime
 from ultralytics import YOLO
 
 
-class PotholeSegmentation:
+class PotholeSegmentationYOLO:
     def __init__(
         self,
         model_path,
         trapezoid_coords,
-        reference_resolution=None,
         confidence_threshold=0.25,
         frame_interval=30,
     ):
@@ -19,9 +19,7 @@ class PotholeSegmentation:
 
         Args:
             model_path: Path to YOLOv11 segmentation model weights
-            trapezoid_coords: np.array of shape (4, 2) - detection region coordinates
-            reference_resolution: (width, height) tuple of the resolution where trapezoid was defined.
-                                  If None, trapezoid_coords are treated as normalized [0,1] coordinates.
+            trapezoid_coords: np.array of shape (4, 2) - detection region normalized coordinates
             confidence_threshold: Confidence threshold for YOLO detections
             frame_interval: Process every Nth frame
         """
@@ -29,14 +27,8 @@ class PotholeSegmentation:
         self.confidence_threshold = confidence_threshold
         self.frame_interval = frame_interval
 
-        # Normalize trapezoid coordinates to [0, 1] range
-        if reference_resolution is not None:
-            # Trapezoid coords are in pixel space, normalize them
-            ref_w, ref_h = reference_resolution
-            self.normalized_trapezoid = trapezoid_coords / np.array([ref_w, ref_h])
-        else:
-            # Already normalized
-            self.normalized_trapezoid = trapezoid_coords.astype(np.float32)
+        # Load the normalized trapezoid coordinates
+        self.normalized_trapezoid = trapezoid_coords.astype(np.float32)
 
         # Load segmentation model
         self.model = self.load_model()
@@ -93,14 +85,14 @@ class PotholeSegmentation:
                 return False
         return True
 
-    def segment_potholes(self, frame_rgb):
+    def segment_potholes(self, frame_rgb) -> list[tuple[np.ndarray, float]]:
         """
         Segment potholes using YOLOv11 on masked image.
 
         Args:
             frame_rgb: Input frame in RGB format
 
-        Returns: List of pothole masks, each as np.array of shape (N, 2)
+        Returns: List of tuples (mask, confidence), where mask is np.array of shape (N, 2)
         """
         # Create masked image (black outside trapezoid)
         masked_image = self.create_masked_image(frame_rgb)
@@ -114,12 +106,15 @@ class PotholeSegmentation:
 
         # Process each detection
         if results and results[0].masks is not None:
-            for i, mask in enumerate(results[0].masks):
-                # Get segmentation mask coordinates
-                # YOLO masks.xy returns list of contours as (N, 2) arrays
-                if hasattr(mask, "xy") and len(mask.xy) > 0:
-                    # Get the contour points
-                    contour = mask.xy[0]  # First contour (main object)
+            print("=" * 50)
+            print(f"Detections found: {len(results[0].masks)}")
+            print("=" * 50)
+            masks_data = results[0].masks.xy if hasattr(results[0].masks, "xy") else []
+            confidences = results[0].boxes.conf if results[0].boxes is not None else []
+
+            for i, contour in enumerate(masks_data):
+                if i < len(confidences):
+                    confidence = confidences[i].item()
 
                     # Convert to numpy array if needed
                     if not isinstance(contour, np.ndarray):
@@ -127,7 +122,7 @@ class PotholeSegmentation:
 
                     # Ensure it's in the right format (N, 2)
                     if contour.shape[0] > 2:  # Need at least 3 points for a polygon
-                        pothole_masks.append(contour.astype(np.float32))
+                        pothole_masks.append((contour.astype(np.float32), confidence))
 
         return pothole_masks
 
@@ -141,6 +136,9 @@ class PotholeSegmentation:
 
         Returns: Number of frames with potholes detected
         """
+        if not video_path:
+            raise ValueError("Video path must be provided. Currently None.")
+
         os.makedirs(output_dir, exist_ok=True)
 
         cap = cv2.VideoCapture(video_path)
@@ -195,9 +193,9 @@ class PotholeSegmentation:
 
                 # Check if any potholes are in detection area
                 valid_masks = []
-                for pothole_mask in pothole_masks:
+                for pothole_mask, confidence in pothole_masks:
                     if self.pothole_in_trapezoid(pothole_mask, frame.shape):
-                        valid_masks.append(pothole_mask)
+                        valid_masks.append((pothole_mask, confidence))
 
                         # Draw pothole on display frame
                         cv2.fillPoly(
@@ -213,19 +211,28 @@ class PotholeSegmentation:
 
                 # Save frame if potholes detected
                 if len(valid_masks) > 0:
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    # Iso format timestamp
+                    timestamp = datetime.now().isoformat(
+                        timespec="milliseconds", sep="T"
+                    )
                     base_name = f"frame_{frame_idx:06d}_{timestamp}"
 
                     # Save original frame
                     frame_path = os.path.join(output_dir, f"{base_name}.jpg")
                     cv2.imwrite(frame_path, frame)
 
-                    # Save all pothole masks for this frame
-                    for i, mask in enumerate(valid_masks):
-                        mask_path = os.path.join(
-                            output_dir, f"{base_name}_mask_{i}.npy"
+                    # Save all pothole masks for this frame into a single JSON file
+                    mask_path = os.path.join(output_dir, f"{base_name}_mask.json")
+                    masks_to_save = []
+                    for mask, conf in valid_masks:
+                        masks_to_save.append(
+                            {
+                                "conf": conf,
+                                "coordinates": mask.tolist(),
+                            }
                         )
-                        np.save(mask_path, mask)
+                    with open(mask_path, "w") as f:
+                        json.dump(masks_to_save, f)
 
                     saved_count += 1
                     print(

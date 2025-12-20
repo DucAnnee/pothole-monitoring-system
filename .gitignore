@@ -6,9 +6,7 @@
 .pnp.*
 .yarn/*
 !.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+!.yarn/plugins !.yarn/releases !.yarn/versions
 
 # testing
 /coverage
@@ -51,3 +49,10 @@ decoded_output
 
 # edge testing video
 edge\inputs
+edge\assets
+edge\models
+edge\segmentation\results
+edge\surface_area\results
+
+# python cache
+__pycache__/
