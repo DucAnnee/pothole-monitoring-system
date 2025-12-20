@@ -6,18 +6,21 @@
 
 *(Raw ingestion metadata for each detected pothole event)*
 
-| Column                 | Data Type    | Description                                                          |
-| ---------------------- | ------------ | -------------------------------------------------------------------- |
-| `event_id`             | VARCHAR      | Unique event identifier                                              |
-| `vehicle_id`           | VARCHAR      | Vehicle identifier that generated the event                          |
-| `created_at`           | TIMESTAMP(3) | Event timestamp reported by the device                               |
-| `gps_lat`              | DOUBLE       | Latitude reported by the device                                      |
-| `gps_lon`              | DOUBLE       | Longitude reported by the device                                     |
-| `gps_accuracy`         | DOUBLE       | GPS accuracy in meters                                               |
-| `raw_image_path`       | VARCHAR      | S3 URI of the raw image (`s3://warehouse/raw_images/{event_id}.jpg`) |
-| `pothole_polygon`      | VARCHAR      | GeoJSON polygon extracted from edge detection                        |
-| `detection_confidence` | DOUBLE       | Edge detection model confidence score                                |
-| `ingested_at`          | TIMESTAMP(3) | Timestamp when the event was ingested into Iceberg                   |
+| Column                 | Data Type              | Description                                                          |
+| ---------------------- | ---------------------- | -------------------------------------------------------------------- |
+| `event_id`             | VARCHAR                | Unique event identifier                                              |
+| `vehicle_id`           | VARCHAR                | Vehicle identifier that generated the event                          |
+| `created_at`           | TIMESTAMP(3)           | Event timestamp reported by the device                               |
+| `gps_lat`              | DOUBLE                 | Latitude reported by the device                                      |
+| `gps_lon`              | DOUBLE                 | Longitude reported by the device                                     |
+| `gps_accuracy`         | DOUBLE                 | GPS accuracy in meters                                               |
+| `raw_image_path`       | VARCHAR                | S3 URI of the raw image (`s3://warehouse/raw_images/{event_id}.jpg`) |
+| `bev_image_path`       | VARCHAR                | S3 URI of the bird's-eye view transformed image                      |
+| `original_mask`        | ARRAY(ARRAY(DOUBLE))   | Polygon mask coordinates from edge detection (list of [x, y] points) |
+| `bev_mask`             | ARRAY(ARRAY(DOUBLE))   | Polygon mask in BEV coordinates (list of [x, y] points)              |
+| `surface_area_cm2`     | DOUBLE                 | Estimated surface area computed at edge (cm²)                        |
+| `detection_confidence` | DOUBLE                 | Edge detection model confidence score                                |
+| `ingested_at`          | TIMESTAMP(3)           | Timestamp when the event was ingested into Iceberg                   |
 
 ---
 
@@ -31,7 +34,7 @@
 | `depth_cm`         | DOUBLE       | Estimated pothole depth in centimeters                  |
 | `surface_area_cm2` | DOUBLE       | Estimated pothole surface area in square centimeters    |
 | `severity_score`   | DOUBLE       | Calculated severity score                               |
-| `severity_level`   | VARCHAR      | Severity category (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`) |
+| `severity_level`   | VARCHAR      | Severity category (`MINOR`, `MODERATE`, `HIGH`, `CRITICAL`) |
 | `calculated_at`    | TIMESTAMP(3) | Timestamp when severity was calculated                  |
 
 ---
@@ -101,7 +104,10 @@ CREATE TABLE iceberg.city.raw_events (
     gps_accuracy DOUBLE COMMENT 'GPS accuracy in meters',
     
     raw_image_path VARCHAR NOT NULL COMMENT 'S3 URI (s3://warehouse/raw_images/{event_id}.jpg)',
-    pothole_polygon VARCHAR NOT NULL COMMENT 'GeoJSON polygon from edge detection',
+    bev_image_path VARCHAR COMMENT 'S3 URI of birds-eye view transformed image',
+    original_mask ARRAY(ARRAY(DOUBLE)) NOT NULL COMMENT 'Polygon mask from edge detection [[x,y], ...]',
+    bev_mask ARRAY(ARRAY(DOUBLE)) COMMENT 'Polygon mask in BEV coordinates [[x,y], ...]',
+    surface_area_cm2 DOUBLE NOT NULL COMMENT 'Surface area computed at edge (cm²)',
     detection_confidence DOUBLE COMMENT 'Edge model confidence score',
     
     ingested_at TIMESTAMP(3) NOT NULL COMMENT 'When ingested into Iceberg'
@@ -112,7 +118,10 @@ WITH (
 );
 ```
 **Changes:**
-- ✅ Added `pothole_polygon` (from edge detection)
+- ✅ Renamed `pothole_polygon` → `original_mask` with type `ARRAY(ARRAY(DOUBLE))`
+- ✅ Added `bev_mask` (bird's-eye view mask) with same type
+- ✅ Added `bev_image_path` for BEV transformed image
+- ✅ Added `surface_area_cm2` (computed at edge device)
 - ✅ Changed all timestamps to `TIMESTAMP(3)` (millisecond precision)
 - ✅ Added NOT NULL constraints where appropriate
 
@@ -127,7 +136,7 @@ CREATE TABLE iceberg.city.severity_scores (
     depth_cm DOUBLE NOT NULL COMMENT 'Estimated depth in centimeters',
     surface_area_cm2 DOUBLE NOT NULL COMMENT 'Estimated surface area',
     severity_score DOUBLE NOT NULL COMMENT 'Calculated severity (0-1 scale?)',
-    severity_level VARCHAR NOT NULL COMMENT 'LOW/MEDIUM/HIGH/CRITICAL',
+    severity_level VARCHAR NOT NULL COMMENT 'MINOR/MODERATE/HIGH/CRITICAL',
     
     calculated_at TIMESTAMP(3) NOT NULL COMMENT 'When severity was calculated'
 )

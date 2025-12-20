@@ -13,13 +13,23 @@
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
-    {"name": "image_path", "type": "string"},
-    {"name": "pothole_polygon", "type": "string"},
+    {"name": "raw_image_path", "type": "string"},
+    {"name": "bev_image_path", "type": ["null", "string"], "default": null},
+    {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
+    {"name": "bev_mask", "type": ["null", {"type": "array", "items": {"type": "array", "items": "double"}}], "default": null},
+    {"name": "surface_area_cm2", "type": "double"},
     {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
 ```
 **Partition key:** `vehicle_id` (12 partitions, good for load distribution)
+
+**Changes from v0:**
+- Renamed `image_path` → `raw_image_path`
+- Added `bev_image_path` (bird's-eye view image, nullable)
+- Renamed `pothole_polygon` → `original_mask` (now array of [x,y] points instead of GeoJSON string)
+- Added `bev_mask` (bird's-eye view mask coordinates, nullable)
+- Added `surface_area_cm2` (computed at edge device)
 
 ---
 
@@ -41,7 +51,9 @@
 
 ---
 
-#### **3. pothole.surface.area.v1** (NEW)
+#### **3. pothole.surface.area.v1** ⚠️ DEPRECATED
+> **Note:** This topic is deprecated. Surface area is now computed at the edge device and included in `pothole.raw.events.v1` as `surface_area_cm2`. This topic may be removed in a future version.
+
 ```json
 {
   "type": "record",
@@ -70,7 +82,7 @@
     {"name": "depth_cm", "type": "double"},
     {"name": "surface_area_cm2", "type": "double"},
     {"name": "severity_score", "type": "double"},
-    {"name": "severity_level", "type": {"type": "enum", "name": "SeverityLevel", "symbols": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]}},
+    {"name": "severity_level", "type": {"type": "enum", "name": "SeverityLevel", "symbols": ["MINOR", "MODERATE", "HIGH", "CRITICAL"]}},
     {"name": "calculated_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
   ]
 }
