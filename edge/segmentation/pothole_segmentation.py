@@ -110,7 +110,9 @@ class PotholeSegmentationYOLO:
             print(f"Detections found: {len(results[0].masks)}")
             print("=" * 50)
             masks_data = results[0].masks.xy if hasattr(results[0].masks, "xy") else []
+            print(masks_data)
             confidences = results[0].boxes.conf if results[0].boxes is not None else []
+            print(confidences)
 
             for i, contour in enumerate(masks_data):
                 if i < len(confidences):

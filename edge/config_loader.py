@@ -162,6 +162,38 @@ class ConfigLoader:
         """Get database configuration (if available)"""
         return self.config.get("database", None)
 
+    def get_kafka_config(self):
+        """Get Kafka configuration"""
+        return self.config.get("kafka", {})
+
+    def get_kafka_topic(self) -> str:
+        """Get Kafka topic name"""
+        return self.config.get("kafka", {}).get("topic", "pothole.raw.events.v1")
+
+    def get_kafka_bootstrap_servers(self) -> str:
+        """Get Kafka bootstrap servers"""
+        return self.config.get("kafka", {}).get(
+            "bootstrap_servers", "localhost:19092,localhost:29092,localhost:39092"
+        )
+
+    def get_kafka_schema_registry_url(self) -> str:
+        """Get Schema Registry URL"""
+        return self.config.get("kafka", {}).get(
+            "schema_registry_url", "http://localhost:8082"
+        )
+
+    def get_minio_config(self):
+        """Get MinIO configuration"""
+        return self.config.get("minio", {})
+
+    def get_gps_bounds(self):
+        """Get GPS simulation bounds"""
+        return self.config.get("gps", {})
+
+    def get_uploader_config(self):
+        """Get uploader configuration"""
+        return self.config.get("uploader", {})
+
     def print_config_summary(self):
         """Print a summary of the loaded configuration"""
         print("=" * 70)
@@ -177,6 +209,19 @@ class ConfigLoader:
         output_dirs = self.get_output_dirs()
         print(f"Segmentation Output: {output_dirs['segmentation']}")
         print(f"Area Estimation Output: {output_dirs['area_estimation']}")
+
+        # Show Kafka config if available
+        if "kafka" in self.config:
+            kafka_config = self.get_kafka_config()
+            print(f"Kafka Topic: {kafka_config.get('topic', 'N/A')}")
+            print(f"Kafka Brokers: {kafka_config.get('bootstrap_servers', 'N/A')}")
+
+        # Show MinIO config if available
+        if "minio" in self.config:
+            minio_config = self.get_minio_config()
+            print(f"MinIO Endpoint: {minio_config.get('endpoint', 'N/A')}")
+            print(f"MinIO Bucket: {minio_config.get('bucket', 'N/A')}")
+
         print("=" * 70)
         print()
 

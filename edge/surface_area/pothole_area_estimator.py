@@ -2,6 +2,7 @@ import cv2
 import json
 import numpy as np
 import os
+import shutil
 from datetime import datetime
 
 
@@ -131,7 +132,9 @@ class PotholeAreaEstimator:
 
         # Transform pothole to BEV
         pothole_reshaped = undistorted_pothole.reshape(-1, 1, 2).astype(np.float32)
-        pothole_bev = cv2.perspectiveTransform(pothole_reshaped, H).reshape(-1, 2)
+        pothole_bev = cv2.perspectiveTransform(pothole_reshaped, H).reshape(
+            -1, 2
+        )  # mask in BEV
 
         # Draw pothole on BEV image
         bev_with_pothole = bev_img.copy()
@@ -149,18 +152,18 @@ class PotholeAreaEstimator:
 
         area_cm2 = self.polygon_area(pothole_transformed)
 
-        return area_cm2, bev_img, H
+        return area_cm2, bev_img, H, pothole_bev
 
-    def process_image_with_mask(self, image_path, mask_coords, output_dir):
+    def process_image_with_mask(self, image_path, mask_data, output_dir):
         """
-        Process a single image with its pothole mask and save results.
+        Process a single image with its pothole mask and calculate area.
 
         Args:
             image_path: Path to the input image
-            mask_coords: List of coordinate of the pothole mask
+            mask_data: Dictionary containing mask information {conf, coordinates}
             output_dir: Directory to save results
 
-        Returns: area_cm2
+        Returns: Enriched mask data with area and timestamp
         """
         # Load image
         img = cv2.imread(image_path)
@@ -168,54 +171,52 @@ class PotholeAreaEstimator:
             raise ValueError(f"Could not load image: {image_path}")
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # Load pothole mask
-        pothole_mask = np.asarray(mask_coords)
+        # Load pothole mask coordinates
+        pothole_mask = np.asarray(mask_data["coordinates"])
 
         # Compute area
-        area_cm2, bev_img, H = self.compute_pothole_area(img_rgb, pothole_mask)
+        area_cm2, bev_img, H, bev_mask = self.compute_pothole_area(
+            img_rgb, pothole_mask
+        )
 
-        # Create output filename based on mask filename (preserves pothole index)
-        mask_base_name = os.path.splitext(os.path.basename(image_path))[0]
-        # Remove "_mask_0" suffix and add "_pothole_0" for clarity
-        # e.g., "frame_000030_timestamp_mask_0" -> "frame_000030_timestamp_pothole_0"
-        if "_mask_" in mask_base_name:
-            output_base = mask_base_name.replace("_mask_", "_pothole_")
-        else:
-            output_base = mask_base_name
+        # Create output filename based on input image
+        base_name = os.path.splitext(os.path.basename(image_path))[0]
 
-        # Save BEV image
-        img_path = os.path.join(output_dir, f"{output_base}_bev.jpg")
-        cv2.imwrite(img_path, cv2.cvtColor(bev_img, cv2.COLOR_RGB2BGR))
+        # Save BEV image for visualization (optional)
+        bev_output_path = os.path.join(output_dir, f"{base_name}_bev.jpg")
+        cv2.imwrite(bev_output_path, cv2.cvtColor(bev_img, cv2.COLOR_RGB2BGR))
 
-        # Save area information
-        txt_path = os.path.join(output_dir, f"{output_base}_area.txt")
-        with open(txt_path, "w") as f:
-            f.write(f"Pothole Surface Area: {area_cm2:.2f} cm²\n")
-            f.write(f"Pothole Surface Area: {area_cm2/10000:.4f} m²\n")
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            f.write(f"Processing Timestamp: {timestamp}\n")
+        # Enrich mask data with area and timestamp
+        enriched_data = {
+            "detection_confidence": mask_data["conf"],
+            "original_mask": mask_data["coordinates"],
+            "bev_mask": bev_mask.tolist(),
+            "homography_matrix": H.tolist(),
+            "surface_area": area_cm2,
+            "timestamp": datetime.now().isoformat(sep="T", timespec="milliseconds"),
+        }
 
-        print(f"✓ Processed {output_base}: {area_cm2:.2f} cm²")
-
-        return area_cm2
+        return enriched_data
 
     def process_batch(self, input_dir, output_dir):
         """
         Process all images and their corresponding masks in a directory.
+        Enriches the JSON mask files with area calculations and timestamps.
+        Copies original images to the output directory.
 
         Args:
             input_dir: Directory containing images and the corresponding .json mask files
-            output_dir: Directory to save results
+            output_dir: Directory to save enriched JSON files, BEV images, and original images
+
+        Returns:
+            Tuple of (processed_count, total_area)
         """
         os.makedirs(output_dir, exist_ok=True)
 
-        # Store the name to delete later
-        processed_filenames = []
-
-        # Find all image files with its corresponding .json masks
         processed_count = 0
         total_area = 0
 
+        # Find all image files with corresponding .json masks
         for filename in os.listdir(input_dir):
             if filename.endswith((".jpg", ".png", ".jpeg")):
                 image_path = os.path.join(input_dir, filename)
@@ -223,35 +224,58 @@ class PotholeAreaEstimator:
                 mask_file = os.path.join(input_dir, base_name + "_mask.json")
 
                 if os.path.exists(mask_file):
-                    with open(mask_file, "r") as f:
-                        # List of {"conf": float, "coordinates": [[x,y], ...]}
-                        masks = json.load(f)
+                    try:
+                        # Load mask data
+                        with open(mask_file, "r") as f:
+                            masks = json.load(f)  # List of {conf, coordinates}
 
-                    for mask_data in masks:
-                        # conf = mask_data["conf"]
-                        mask_coords = mask_data["coordinates"]
+                        enriched_masks = []
 
-                        try:
-                            area = self.process_image_with_mask(
-                                image_path, mask_coords, output_dir
-                            )
-                            total_area += area
-                            processed_count += 1
-                        except Exception as e:
-                            print(f"✗ Error processing mask from {filename}: {e}")
-                    processed_filenames.append(filename)
-                    processed_filenames.append(os.path.basename(mask_file))
+                        # Process each mask in the image
+                        for idx, mask_data in enumerate(masks):
+                            try:
+                                enriched_data = self.process_image_with_mask(
+                                    image_path, mask_data, output_dir
+                                )
+                                enriched_masks.append(enriched_data)
 
-        print(f"\n{'='*50}")
-        print(f"Batch processing complete!")
-        print(f"Total images processed: {processed_count}")
+                                area = enriched_data["area_cm2"]
+                                total_area += area
+                                processed_count += 1
+
+                                print(
+                                    f"✓ Processed {base_name} mask #{idx}: "
+                                    f"{area:.2f} cm² (conf: {mask_data['conf']:.3f})"
+                                )
+
+                            except Exception as e:
+                                print(
+                                    f"✗ Error processing mask #{idx} from {filename}: {e}"
+                                )
+                                # Keep original data if processing fails
+                                enriched_masks.append(mask_data)
+
+                        # Save enriched JSON to output directory
+                        output_json_path = os.path.join(output_dir, base_name + ".json")
+                        with open(output_json_path, "w") as f:
+                            json.dump(enriched_masks, f, indent=2)
+
+                        # Copy original image to output directory
+                        output_image_path = os.path.join(output_dir, filename)
+                        shutil.copy2(image_path, output_image_path)
+
+                        print(f"✓ Saved enriched data to {output_json_path}")
+                        print(f"✓ Copied original image to {output_image_path}")
+
+                    except Exception as e:
+                        print(f"✗ Error processing {filename}: {e}")
+
+        print(f"\n{'='*70}")
+        print("Batch processing complete!")
+        print(f"Total potholes processed: {processed_count}")
         print(f"Total area detected: {total_area:.2f} cm² ({total_area/10000:.4f} m²)")
         print(f"Results saved to: {output_dir}")
-        print(f"{'='*50}")
-
-        # delete processed files to save space
-        print("\nDeleting processed files to save space...")
-        self.delete_processed(processed_filenames, input_dir)
+        print(f"{'='*70}")
 
         return processed_count, total_area
 

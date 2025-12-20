@@ -13,7 +13,7 @@ video:
 models: 
   yolo:
     weights_path: "models/yolo11s.pt"
-    confidence_threshold: 0.25
+    confidence_threshold: 0.1
   rfdetr:
     weights_path: "models/rfdetr.pth"
     confidence_threshold: 0.25
@@ -49,9 +49,41 @@ output:
 
 # Processing parameters
 processing:
-  frame_interval: 5  # Sampling rate
+  frame_interval: 3  # Sampling rate
   enable_display: true  # Show real-time visualization window
   display_window_name: "Pothole Segmentation"
+
+# Kafka configuration
+kafka:
+  topic: "pothole.raw.events.v1"
+  bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
+  schema_registry_url: "http://localhost:8082"
+  max_retries: 5
+  retry_delay: 2
+
+# MinIO configuration
+minio:
+  endpoint: "localhost:9000"
+  access_key: "${MINIO_ACCESS_KEY:minioadmin}"
+  secret_key: "${MINIO_SECRET_KEY:minioadmin}"
+  bucket: "warehouse"
+  prefix: "raw_images"
+  secure: false
+  max_retries: 5
+  retry_delay: 2
+
+# Uploader configuration
+uploader:
+  input_dir: "surface_area/results"  # Directory containing processed images and enriched JSON
+  # image_path: ".assets/HCM-HN-01_frame_000001.jpg"
+  upload_interval: 10  # seconds between uploads
+  
+# GPS simulation bounds (HCM City)
+gps:
+  lat_min: 10.7
+  lat_max: 10.9
+  lon_min: 106.6
+  lon_max: 106.8
 
 # Optional: API Endpoints (for future cloud integration)
 # api:
