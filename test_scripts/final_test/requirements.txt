@@ -5,5 +5,8 @@ requests
 trino
 minio
 attrs
-hppx
+httpx
 authlib
+pyarrow
+s3fs
+pyiceberg-core

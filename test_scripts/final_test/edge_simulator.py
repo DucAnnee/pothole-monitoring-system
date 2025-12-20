@@ -44,12 +44,13 @@ RAW_EVENT_SCHEMA_STR = """
   "fields": [
     {"name": "event_id", "type": "string"},
     {"name": "vehicle_id", "type": "string"},
-    {"name": "timestamp", "type": "string"},
+    {"name": "timestamp", "type": {"type": "long", "logicalType": "timestamp-millis"}},
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
     {"name": "image_path", "type": "string"},
-    {"name": "detection_confidence", "type": ["null","double"], "default": null}
+    {"name": "pothole_polygon", "type": "string"},
+    {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
 """
@@ -179,6 +180,25 @@ def generate_random_hcm_gps():
     return lat, lon
 
 
+def generate_pothole_polygon(center_lat, center_lon):
+    """Generate a dummy GeoJSON polygon around the GPS coordinates."""
+    # Create a small polygon (~1-2 meter radius) around the center point
+    offset = 0.00002  # Approx 2 meters in degrees
+    
+    polygon = {
+        "type": "Polygon",
+        "coordinates": [[
+            [center_lon - offset, center_lat - offset],
+            [center_lon + offset, center_lat - offset],
+            [center_lon + offset, center_lat + offset],
+            [center_lon - offset, center_lat + offset],
+            [center_lon - offset, center_lat - offset]  # Close the polygon
+        ]]
+    }
+    
+    return json.dumps(polygon)
+
+
 def load_image():
     """Load the test image from disk."""
     try:
@@ -226,36 +246,40 @@ def main():
     
     vehicle_id = f"vehicle-{uuid4().hex[:8]}"
     print(f"\n[INFO] Simulating vehicle: {vehicle_id}")
-    print(f"[INFO] Sending 1 event per minute. Press Ctrl+C to stop.\n")
+    print(f"[INFO] Sending 1 event per 10 seconds. Press Ctrl+C to stop.\n")
     
     try:
         while True:
             # Generate event data
             event_id = str(uuid4())
             gps_lat, gps_lon = generate_random_hcm_gps()
-            timestamp = datetime.now(timezone.utc).isoformat()
+            timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)  # timestamp-millis
             
             print(f"\n{'='*70}")
             print(f"[EVENT] ID: {event_id}")
             print(f"[GPS] Lat: {gps_lat:.6f}, Lon: {gps_lon:.6f}")
-            print(f"[TIME] {timestamp}")
+            print(f"[TIME] {datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()}")
             
             # Upload image to MinIO
             s3_path = upload_image_to_minio(minio_client, image_bytes, event_id)
             if s3_path is None:
                 print("[WARN] Skipping Kafka publish due to MinIO failure.")
-                time.sleep(60)
+                time.sleep(10)
                 continue
+            
+            # Generate dummy pothole polygon
+            pothole_polygon = generate_pothole_polygon(gps_lat, gps_lon)
             
             # Create Avro record
             raw_event = {
                 "event_id": event_id,
                 "vehicle_id": vehicle_id,
-                "timestamp": timestamp,
+                "timestamp": timestamp_ms,
                 "gps_lat": gps_lat,
                 "gps_lon": gps_lon,
                 "gps_accuracy": random.uniform(5.0, 15.0),  # meters
                 "image_path": s3_path,
+                "pothole_polygon": pothole_polygon,
                 "detection_confidence": random.uniform(0.85, 0.99),
             }
             
@@ -276,8 +300,8 @@ def main():
             producer.poll(0)
             producer.flush()
             
-            print(f"[INFO] Waiting 60 seconds for next event...")
-            time.sleep(60)
+            print(f"[INFO] Waiting 10 seconds for next event...")
+            time.sleep(10)
             
     except KeyboardInterrupt:
         print("\n\n[INFO] Stopped by user.")

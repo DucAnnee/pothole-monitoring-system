@@ -45,3 +45,5 @@ container-data
 
 .next
 node_modules
+
+decoded_output

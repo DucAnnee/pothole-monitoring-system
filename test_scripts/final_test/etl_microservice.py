@@ -1,9 +1,20 @@
+"""
+Generalized Kafka → Iceberg ETL Microservice
+
+Reads from configurable Kafka topics and writes to corresponding Iceberg tables.
+Currently supports:
+- pothole.raw.events.v1 → iceberg.city.raw_events
+- pothole.severity.score.v1 → iceberg.city.severity_scores
+"""
+
 import json
 import time
-from datetime import datetime, timezone
-from typing import List, Dict, Any
 import sys
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Callable, Optional
+from dataclasses import dataclass
 
+import pyarrow as pa
 from confluent_kafka import Consumer, Producer, KafkaException
 from confluent_kafka.serialization import SerializationContext, MessageField
 from confluent_kafka.schema_registry import SchemaRegistryClient
@@ -16,9 +27,6 @@ import trino
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-KAFKA_SOURCE_TOPIC = "pothole.raw.events.v1"
-KAFKA_DLQ_TOPIC = "pothole.raw.events.v1.dlq"
-
 BOOTSTRAP_SERVERS = "localhost:19092,localhost:29092,localhost:39092"
 SCHEMA_REGISTRY_URL = "http://localhost:8082"
 CONSUMER_GROUP_ID = "pothole-iceberg-etl"
@@ -29,7 +37,6 @@ POLARIS_CREDENTIALS = "root:s3cr3t"
 POLARIS_WAREHOUSE = "warehouse"
 ICEBERG_CATALOG_NAME = "iceberg"
 ICEBERG_NAMESPACE = "city"
-ICEBERG_TABLE_NAME = "raw_events"
 
 # Trino config
 TRINO_HOST = "localhost"
@@ -38,10 +45,16 @@ TRINO_USER = "trino"
 TRINO_CATALOG = "iceberg"
 
 # Batching config
-BATCH_SIZE = 100  # Write after this many messages
-BATCH_TIMEOUT_SECONDS = 30  # Or after this many seconds
+BATCH_SIZE = 100
+BATCH_TIMEOUT_SECONDS = 30
 
-RAW_EVENT_SCHEMA_STR = """
+# DLQ topic suffix
+DLQ_SUFFIX = ".dlq"
+
+# ============================================================================
+# AVRO SCHEMAS
+# ============================================================================
+RAW_EVENT_AVRO_SCHEMA = """
 {
   "type": "record",
   "name": "RawEvent",
@@ -49,28 +62,80 @@ RAW_EVENT_SCHEMA_STR = """
   "fields": [
     {"name": "event_id", "type": "string"},
     {"name": "vehicle_id", "type": "string"},
-    {"name": "timestamp", "type": "string"},
+    {"name": "timestamp", "type": {"type": "long", "logicalType": "timestamp-millis"}},
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
     {"name": "image_path", "type": "string"},
-    {"name": "detection_confidence", "type": ["null","double"], "default": null}
+    {"name": "pothole_polygon", "type": "string"},
+    {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
 """
 
-# SQL for table creation
-CREATE_TABLE_SQL = """
+SEVERITY_SCORE_AVRO_SCHEMA = """
+{
+  "type": "record",
+  "name": "SeverityScore",
+  "namespace": "pothole.severity.v1",
+  "fields": [
+    {"name": "event_id", "type": "string"},
+    {"name": "depth_cm", "type": "double"},
+    {"name": "surface_area_cm2", "type": "double"},
+    {"name": "severity_score", "type": "double"},
+    {"name": "severity_level", "type": {"type": "enum", "name": "SeverityLevel", "symbols": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]}},
+    {"name": "calculated_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}
+"""
+
+# ============================================================================
+# PYARROW SCHEMAS (for Iceberg tables)
+# Note: nullable=False for required fields to match Iceberg table schema
+# Note: PyIceberg requires microsecond precision ("us") for timestamp transforms
+# ============================================================================
+RAW_EVENTS_ARROW_SCHEMA = pa.schema([
+    pa.field("event_id", pa.string(), nullable=False),
+    pa.field("vehicle_id", pa.string(), nullable=False),
+    pa.field("created_at", pa.timestamp("us"), nullable=False),
+    pa.field("gps_lat", pa.float64(), nullable=False),
+    pa.field("gps_lon", pa.float64(), nullable=False),
+    pa.field("gps_accuracy", pa.float64(), nullable=True),  # Optional
+    pa.field("raw_image_path", pa.string(), nullable=False),
+    pa.field("pothole_polygon", pa.string(), nullable=False),
+    pa.field("detection_confidence", pa.float64(), nullable=True),  # Optional
+    pa.field("ingested_at", pa.timestamp("us"), nullable=False),
+])
+
+SEVERITY_SCORES_ARROW_SCHEMA = pa.schema([
+    pa.field("event_id", pa.string(), nullable=False),
+    pa.field("depth_cm", pa.float64(), nullable=False),
+    pa.field("surface_area_cm2", pa.float64(), nullable=False),
+    pa.field("severity_score", pa.float64(), nullable=False),
+    pa.field("severity_level", pa.string(), nullable=False),
+    pa.field("calculated_at", pa.timestamp("us"), nullable=False),
+])
+
+# ============================================================================
+# TRINO DDL STATEMENTS
+# ============================================================================
+CREATE_NAMESPACE_SQL = "CREATE SCHEMA IF NOT EXISTS iceberg.city"
+
+CREATE_RAW_EVENTS_SQL = """
 CREATE TABLE IF NOT EXISTS iceberg.city.raw_events (
-    event_id VARCHAR COMMENT 'Unique event identifier',
-    vehicle_id VARCHAR COMMENT 'Identifier of the vehicle generating the event',
-    created_at TIMESTAMP COMMENT 'Original event timestamp from Kafka',
-    gps_lat DOUBLE COMMENT 'Latitude reported by the device',
-    gps_lon DOUBLE COMMENT 'Longitude reported by the device',
-    gps_accuracy DOUBLE COMMENT 'Reported GPS accuracy in meters',
-    raw_image_path VARCHAR COMMENT 'S3 URI of the event image',
-    detection_confidence DOUBLE COMMENT 'Model confidence score (optional)',
-    ingested_at TIMESTAMP COMMENT 'Timestamp when the event was ingested into this table of the data lake'
+    event_id VARCHAR NOT NULL COMMENT 'Unique event identifier',
+    vehicle_id VARCHAR NOT NULL COMMENT 'Vehicle identifier',
+    created_at TIMESTAMP(3) NOT NULL COMMENT 'Event timestamp from device',
+    
+    gps_lat DOUBLE NOT NULL COMMENT 'Latitude',
+    gps_lon DOUBLE NOT NULL COMMENT 'Longitude',
+    gps_accuracy DOUBLE COMMENT 'GPS accuracy in meters',
+    
+    raw_image_path VARCHAR NOT NULL COMMENT 'S3 URI (s3://warehouse/raw_images/{event_id}.jpg)',
+    pothole_polygon VARCHAR NOT NULL COMMENT 'GeoJSON polygon from edge detection',
+    detection_confidence DOUBLE COMMENT 'Edge model confidence score',
+    
+    ingested_at TIMESTAMP(3) NOT NULL COMMENT 'When ingested into Iceberg'
 )
 WITH (
     format = 'PARQUET',
@@ -78,7 +143,119 @@ WITH (
 )
 """
 
-CREATE_NAMESPACE_SQL = "CREATE SCHEMA IF NOT EXISTS iceberg.city"
+CREATE_SEVERITY_SCORES_SQL = """
+CREATE TABLE IF NOT EXISTS iceberg.city.severity_scores (
+    event_id VARCHAR NOT NULL COMMENT 'Links to raw_events',
+    
+    depth_cm DOUBLE NOT NULL COMMENT 'Estimated depth in centimeters',
+    surface_area_cm2 DOUBLE NOT NULL COMMENT 'Estimated surface area',
+    severity_score DOUBLE NOT NULL COMMENT 'Calculated severity (0-1 scale)',
+    severity_level VARCHAR NOT NULL COMMENT 'LOW/MEDIUM/HIGH/CRITICAL',
+    
+    calculated_at TIMESTAMP(3) NOT NULL COMMENT 'When severity was calculated'
+)
+WITH (
+    format = 'PARQUET',
+    partitioning = ARRAY['day(calculated_at)']
+)
+"""
+
+# ============================================================================
+# TRANSFORMATION FUNCTIONS
+# ============================================================================
+def _convert_timestamp(ts_value) -> datetime:
+    """
+    Convert timestamp value to timezone-naive datetime.
+    Handles both:
+    - datetime objects (auto-converted by Avro deserializer from timestamp-millis)
+    - int/long milliseconds since epoch
+    """
+    if isinstance(ts_value, datetime):
+        # Already a datetime (Avro deserializer converted it)
+        return ts_value.replace(tzinfo=None)
+    else:
+        # It's milliseconds since epoch
+        return datetime.fromtimestamp(ts_value / 1000, tz=timezone.utc).replace(tzinfo=None)
+
+
+def transform_raw_event(avro_record: Dict[str, Any]) -> Dict[str, Any]:
+    """Transform raw event from Kafka to Iceberg schema."""
+    now = datetime.now(timezone.utc)
+    
+    # Convert timestamp (handles both datetime and long formats)
+    created_at = _convert_timestamp(avro_record['timestamp'])
+    
+    return {
+        "event_id": avro_record['event_id'],
+        "vehicle_id": avro_record['vehicle_id'],
+        "created_at": created_at,
+        "gps_lat": avro_record['gps_lat'],
+        "gps_lon": avro_record['gps_lon'],
+        "gps_accuracy": avro_record.get('gps_accuracy'),
+        "raw_image_path": avro_record['image_path'],
+        "pothole_polygon": avro_record['pothole_polygon'],
+        "detection_confidence": avro_record.get('detection_confidence'),
+        "ingested_at": now.replace(tzinfo=None),
+    }
+
+
+def transform_severity_score(avro_record: Dict[str, Any]) -> Dict[str, Any]:
+    """Transform severity score from Kafka to Iceberg schema."""
+    # Convert timestamp (handles both datetime and long formats)
+    calculated_at = _convert_timestamp(avro_record['calculated_at'])
+    
+    return {
+        "event_id": avro_record['event_id'],
+        "depth_cm": avro_record['depth_cm'],
+        "surface_area_cm2": avro_record['surface_area_cm2'],
+        "severity_score": avro_record['severity_score'],
+        "severity_level": avro_record['severity_level'],
+        "calculated_at": calculated_at,
+    }
+
+
+# ============================================================================
+# TOPIC-TABLE MAPPING CONFIGURATION
+# ============================================================================
+@dataclass
+class TopicTableMapping:
+    """Configuration for a Kafka topic to Iceberg table mapping."""
+    kafka_topic: str
+    iceberg_table: str
+    avro_schema: str
+    arrow_schema: pa.Schema
+    create_table_sql: str
+    transform_fn: Callable[[Dict[str, Any]], Dict[str, Any]]
+    
+    @property
+    def dlq_topic(self) -> str:
+        return self.kafka_topic + DLQ_SUFFIX
+
+
+# Define all topic-table mappings
+TOPIC_TABLE_MAPPINGS: List[TopicTableMapping] = [
+    TopicTableMapping(
+        kafka_topic="pothole.raw.events.v1",
+        iceberg_table="raw_events",
+        avro_schema=RAW_EVENT_AVRO_SCHEMA,
+        arrow_schema=RAW_EVENTS_ARROW_SCHEMA,
+        create_table_sql=CREATE_RAW_EVENTS_SQL,
+        transform_fn=transform_raw_event,
+    ),
+    TopicTableMapping(
+        kafka_topic="pothole.severity.score.v1",
+        iceberg_table="severity_scores",
+        avro_schema=SEVERITY_SCORE_AVRO_SCHEMA,
+        arrow_schema=SEVERITY_SCORES_ARROW_SCHEMA,
+        create_table_sql=CREATE_SEVERITY_SCORES_SQL,
+        transform_fn=transform_severity_score,
+    ),
+]
+
+# Create lookup dict for quick access
+TOPIC_TO_MAPPING: Dict[str, TopicTableMapping] = {
+    m.kafka_topic: m for m in TOPIC_TABLE_MAPPINGS
+}
 
 
 # ============================================================================
@@ -129,9 +306,9 @@ class TrinoManager:
         """Execute DDL statement."""
         try:
             cursor = self.connection.cursor()
-            print(f"[INFO] Executing SQL: {sql[:100]}...")
+            print(f"[INFO] Executing SQL: {sql[:80]}...")
             cursor.execute(sql)
-            cursor.fetchall()  # Consume results
+            cursor.fetchall()
             cursor.close()
             print("[SUCCESS] SQL executed successfully")
             return True
@@ -149,18 +326,6 @@ class TrinoManager:
             return namespace in schemas
         except Exception as e:
             print(f"[ERROR] Failed to check namespace: {e}")
-            return False
-    
-    def table_exists(self, namespace: str, table: str) -> bool:
-        """Check if a table exists."""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute(f"SHOW TABLES IN {self.catalog}.{namespace}")
-            tables = [row[0] for row in cursor.fetchall()]
-            cursor.close()
-            return table in tables
-        except Exception as e:
-            print(f"[ERROR] Failed to check table: {e}")
             return False
     
     def close(self):
@@ -204,7 +369,6 @@ class PolarisTokenManager:
         
         token_data = response.json()
         self.token = token_data['access_token']
-        # Refresh token before it expires (default is ~1 hour, refresh at 50 minutes)
         self.token_expires_at = time.time() + 3000
         
         print("[SUCCESS] Obtained Polaris access token")
@@ -238,20 +402,8 @@ def create_iceberg_catalog(token_manager: PolarisTokenManager) -> RestCatalog:
     return catalog
 
 
-def ensure_table_exists(catalog: RestCatalog, trino_mgr: TrinoManager) -> bool:
-    """Check if table exists, create if missing using Trino."""
-    table_identifier = f"{ICEBERG_NAMESPACE}.{ICEBERG_TABLE_NAME}"
-    
-    # First check via PyIceberg
-    try:
-        table = catalog.load_table(table_identifier)
-        print(f"[SUCCESS] Table {table_identifier} exists")
-        return True
-    except NoSuchTableError:
-        print(f"[WARN] Table {table_identifier} does not exist")
-    
-    # Table doesn't exist, create via Trino
-    print("[INFO] Creating table via Trino...")
+def ensure_tables_exist(catalog: RestCatalog, trino_mgr: TrinoManager) -> bool:
+    """Ensure all required Iceberg tables exist."""
     
     # First ensure namespace exists
     if not trino_mgr.namespace_exists(ICEBERG_NAMESPACE):
@@ -263,186 +415,174 @@ def ensure_table_exists(catalog: RestCatalog, trino_mgr: TrinoManager) -> bool:
     else:
         print(f"[INFO] Namespace {ICEBERG_NAMESPACE} already exists")
     
-    # Create the table
-    if not trino_mgr.execute_ddl(CREATE_TABLE_SQL):
-        print("[ERROR] Failed to create table")
-        return False
+    # Check/create each table
+    for mapping in TOPIC_TABLE_MAPPINGS:
+        table_identifier = f"{ICEBERG_NAMESPACE}.{mapping.iceberg_table}"
+        
+        try:
+            catalog.load_table(table_identifier)
+            print(f"[SUCCESS] Table {table_identifier} exists")
+        except NoSuchTableError:
+            print(f"[WARN] Table {table_identifier} does not exist, creating...")
+            
+            if not trino_mgr.execute_ddl(mapping.create_table_sql):
+                print(f"[ERROR] Failed to create table {table_identifier}")
+                return False
+            
+            # Verify creation
+            time.sleep(2)
+            try:
+                catalog.load_table(table_identifier)
+                print(f"[SUCCESS] Created and verified table {table_identifier}")
+            except NoSuchTableError:
+                print(f"[ERROR] Table {table_identifier} created but not accessible")
+                return False
     
-    print(f"[SUCCESS] Created table {table_identifier}")
-    
-    # Verify it now exists
-    time.sleep(2)  # Give Polaris a moment to register the table
-    try:
-        catalog.load_table(table_identifier)
-        print(f"[SUCCESS] Verified table {table_identifier} is accessible")
-        return True
-    except NoSuchTableError:
-        print(f"[ERROR] Table created but not accessible via PyIceberg")
-        return False
+    return True
 
 
 # ============================================================================
 # KAFKA SETUP
 # ============================================================================
-def create_consumer() -> Consumer:
-    """Create Kafka consumer with Avro deserialization."""
+def create_consumer(topics: List[str]) -> Consumer:
+    """Create Kafka consumer subscribed to multiple topics."""
     consumer_conf = {
         "bootstrap.servers": BOOTSTRAP_SERVERS,
         "group.id": CONSUMER_GROUP_ID,
         "auto.offset.reset": "earliest",
-        "enable.auto.commit": False,  # Manual commit after Iceberg write
+        "enable.auto.commit": False,
     }
     
     consumer = Consumer(consumer_conf)
-    consumer.subscribe([KAFKA_SOURCE_TOPIC])
-    print(f"[SUCCESS] Subscribed to {KAFKA_SOURCE_TOPIC}")
+    consumer.subscribe(topics)
+    print(f"[SUCCESS] Subscribed to topics: {', '.join(topics)}")
     
     return consumer
 
 
 def create_dlq_producer() -> Producer:
-    """Create Kafka producer for dead letter queue."""
-    producer_conf = {
-        "bootstrap.servers": BOOTSTRAP_SERVERS,
-    }
-    
-    return Producer(producer_conf)
+    """Create Kafka producer for dead letter queues."""
+    return Producer({"bootstrap.servers": BOOTSTRAP_SERVERS})
 
 
-def create_avro_deserializer() -> AvroDeserializer:
-    """Create Avro deserializer with Schema Registry."""
+def create_deserializers(mappings: List[TopicTableMapping]) -> Dict[str, AvroDeserializer]:
+    """Create Avro deserializers for all topics."""
     schema_registry_conf = {"url": SCHEMA_REGISTRY_URL}
     schema_registry_client = SchemaRegistryClient(schema_registry_conf)
     
-    return AvroDeserializer(
-        schema_registry_client,
-        RAW_EVENT_SCHEMA_STR,
-        lambda obj, ctx: obj,  # Return dict as-is
-    )
-
-
-def create_dlq_serializer() -> AvroSerializer:
-    """Create Avro serializer for DLQ messages."""
-    schema_registry_conf = {"url": SCHEMA_REGISTRY_URL}
-    schema_registry_client = SchemaRegistryClient(schema_registry_conf)
+    deserializers = {}
+    for mapping in mappings:
+        deserializers[mapping.kafka_topic] = AvroDeserializer(
+            schema_registry_client,
+            mapping.avro_schema,
+            lambda obj, ctx: obj,
+        )
     
-    # DLQ schema includes error info
-    dlq_schema = """
-    {
-      "type": "record",
-      "name": "DeadLetterRecord",
-      "namespace": "pothole.dlq.v1",
-      "fields": [
-        {"name": "original_topic", "type": "string"},
-        {"name": "original_partition", "type": "int"},
-        {"name": "original_offset", "type": "long"},
-        {"name": "error_message", "type": "string"},
-        {"name": "error_timestamp", "type": "string"},
-        {"name": "raw_value", "type": "bytes"}
-      ]
-    }
-    """
-    
-    return AvroSerializer(
-        schema_registry_client,
-        dlq_schema,
-        lambda obj, ctx: obj,
-    )
-
-
-# ============================================================================
-# DATA TRANSFORMATION
-# ============================================================================
-def transform_to_iceberg_record(avro_record: Dict[str, Any]) -> Dict[str, Any]:
-    """Transform Avro record to Iceberg table schema."""
-    now = datetime.now(timezone.utc)
-    
-    # Parse timestamp string to datetime
-    created_at = datetime.fromisoformat(avro_record['timestamp'].replace('Z', '+00:00'))
-    
-    return {
-        "event_id": avro_record['event_id'],
-        "vehicle_id": avro_record['vehicle_id'],
-        "created_at": created_at,
-        "gps_lat": avro_record['gps_lat'],
-        "gps_lon": avro_record['gps_lon'],
-        "gps_accuracy": avro_record.get('gps_accuracy'),
-        "raw_image_path": avro_record['image_path'],
-        "detection_confidence": avro_record.get('detection_confidence'),
-        "ingested_at": now,
-    }
+    return deserializers
 
 
 # ============================================================================
 # BATCH PROCESSOR
 # ============================================================================
-class BatchProcessor:
-    """Handles batching and writing to Iceberg."""
+class MultiBatchProcessor:
+    """Handles batching and writing to multiple Iceberg tables."""
     
-    def __init__(self, catalog: RestCatalog, consumer: Consumer, 
-                 dlq_producer: Producer, dlq_serializer: AvroSerializer):
+    def __init__(
+        self,
+        catalog: RestCatalog,
+        consumer: Consumer,
+        dlq_producer: Producer,
+        mappings: List[TopicTableMapping],
+    ):
         self.catalog = catalog
         self.consumer = consumer
         self.dlq_producer = dlq_producer
-        self.dlq_serializer = dlq_serializer
         
-        self.batch: List[Dict[str, Any]] = []
-        self.batch_messages: List[Any] = []  # Store Kafka messages for commit
+        # Initialize batches and tables for each mapping
+        self.batches: Dict[str, List[Dict[str, Any]]] = {}
+        self.batch_messages: Dict[str, List[Any]] = {}
+        self.tables: Dict[str, Any] = {}
+        self.mappings: Dict[str, TopicTableMapping] = {}
+        
+        for mapping in mappings:
+            topic = mapping.kafka_topic
+            self.batches[topic] = []
+            self.batch_messages[topic] = []
+            self.mappings[topic] = mapping
+            
+            # Load Iceberg table
+            table_id = f"{ICEBERG_NAMESPACE}.{mapping.iceberg_table}"
+            self.tables[topic] = catalog.load_table(table_id)
+        
         self.batch_start_time = time.time()
-        
-        table_identifier = f"{ICEBERG_NAMESPACE}.{ICEBERG_TABLE_NAME}"
-        self.table = catalog.load_table(table_identifier)
     
-    def add_record(self, record: Dict[str, Any], kafka_msg: Any):
-        """Add record to batch."""
-        self.batch.append(record)
-        self.batch_messages.append(kafka_msg)
+    def add_record(self, topic: str, record: Dict[str, Any], kafka_msg: Any):
+        """Add record to the appropriate batch."""
+        self.batches[topic].append(record)
+        self.batch_messages[topic].append(kafka_msg)
     
     def should_flush(self) -> bool:
-        """Check if batch should be flushed."""
-        if len(self.batch) >= BATCH_SIZE:
+        """Check if any batch should be flushed."""
+        # Check total batch size across all topics
+        total_records = sum(len(batch) for batch in self.batches.values())
+        if total_records >= BATCH_SIZE:
             return True
         
+        # Check timeout
         if time.time() - self.batch_start_time >= BATCH_TIMEOUT_SECONDS:
             return True
         
         return False
     
-    def flush(self):
-        """Write batch to Iceberg and commit offsets."""
-        if not self.batch:
+    def flush_all(self):
+        """Flush all batches to their respective Iceberg tables."""
+        for topic in self.batches:
+            self._flush_topic(topic)
+        
+        # Reset timer
+        self.batch_start_time = time.time()
+    
+    def _flush_topic(self, topic: str):
+        """Flush a specific topic's batch to Iceberg."""
+        batch = self.batches[topic]
+        if not batch:
             return
         
+        mapping = self.mappings[topic]
+        table = self.tables[topic]
+        
         try:
-            print(f"\n[INFO] Writing batch of {len(self.batch)} records to Iceberg...")
+            print(f"\n[INFO] Writing {len(batch)} records to {mapping.iceberg_table}...")
             
-            # Write to Iceberg using PyIceberg
-            with self.table.update_spec() as update:
-                pass  # Schema is already set
+            # Convert to PyArrow Table
+            arrow_table = pa.Table.from_pylist(batch, schema=mapping.arrow_schema)
             
-            # Append data
-            self.table.append(self.batch)
+            # Append to Iceberg
+            table.append(arrow_table)
             
-            print(f"[SUCCESS] Wrote {len(self.batch)} records to Iceberg")
+            print(f"[SUCCESS] Wrote {len(batch)} records to {mapping.iceberg_table}")
             
-            # Commit Kafka offsets after successful write
-            if self.batch_messages:
-                last_msg = self.batch_messages[-1]
+            # Commit Kafka offsets
+            if self.batch_messages[topic]:
+                last_msg = self.batch_messages[topic][-1]
                 self.consumer.commit(message=last_msg)
-                print(f"[SUCCESS] Committed Kafka offset: partition={last_msg.partition()}, offset={last_msg.offset()}")
+                print(f"[SUCCESS] Committed offset for {topic}: partition={last_msg.partition()}, offset={last_msg.offset()}")
             
-            # Reset batch
-            self.batch.clear()
-            self.batch_messages.clear()
-            self.batch_start_time = time.time()
+            # Clear batch
+            self.batches[topic].clear()
+            self.batch_messages[topic].clear()
             
         except Exception as e:
-            print(f"[ERROR] Failed to write batch to Iceberg: {e}")
-            # Don't clear batch - let's retry or handle differently
+            print(f"[ERROR] Failed to write to {mapping.iceberg_table}: {e}")
             raise
     
-    def send_to_dlq(self, kafka_msg: Any, error: str):
+    def send_to_dlq(self, topic: str, kafka_msg: Any, error: str):
         """Send failed message to dead letter queue."""
+        mapping = self.mappings.get(topic)
+        if not mapping:
+            print(f"[ERROR] Unknown topic {topic}, cannot send to DLQ")
+            return
+        
         try:
             dlq_record = {
                 "original_topic": kafka_msg.topic(),
@@ -450,24 +590,22 @@ class BatchProcessor:
                 "original_offset": kafka_msg.offset(),
                 "error_message": str(error),
                 "error_timestamp": datetime.now(timezone.utc).isoformat(),
-                "raw_value": kafka_msg.value(),
             }
             
-            serialized_value = self.dlq_serializer(
-                dlq_record,
-                SerializationContext(KAFKA_DLQ_TOPIC, MessageField.VALUE),
-            )
-            
             self.dlq_producer.produce(
-                topic=KAFKA_DLQ_TOPIC,
-                value=serialized_value,
+                topic=mapping.dlq_topic,
+                value=json.dumps(dlq_record).encode('utf-8'),
             )
             self.dlq_producer.poll(0)
             
-            print(f"[DLQ] Sent message to dead letter queue: {error}")
+            print(f"[DLQ] Sent message to {mapping.dlq_topic}: {error}")
             
         except Exception as dlq_error:
             print(f"[ERROR] Failed to send to DLQ: {dlq_error}")
+    
+    def get_pending_count(self) -> int:
+        """Get total number of pending records across all batches."""
+        return sum(len(batch) for batch in self.batches.values())
 
 
 # ============================================================================
@@ -475,8 +613,14 @@ class BatchProcessor:
 # ============================================================================
 def main():
     print("=" * 70)
-    print("KAFKA → ICEBERG ETL PIPELINE")
+    print("GENERALIZED KAFKA → ICEBERG ETL PIPELINE")
     print("=" * 70)
+    
+    # Print configured mappings
+    print("\n[CONFIG] Topic-Table Mappings:")
+    for mapping in TOPIC_TABLE_MAPPINGS:
+        print(f"  - {mapping.kafka_topic} → iceberg.{ICEBERG_NAMESPACE}.{mapping.iceberg_table}")
+    print()
     
     # Initialize Trino connection
     trino_mgr = TrinoManager(TRINO_HOST, TRINO_PORT, TRINO_USER, TRINO_CATALOG)
@@ -488,34 +632,37 @@ def main():
     token_manager = PolarisTokenManager(POLARIS_URL, POLARIS_CREDENTIALS)
     catalog = create_iceberg_catalog(token_manager)
     
-    # Ensure table exists (create if needed)
-    if not ensure_table_exists(catalog, trino_mgr):
+    # Ensure all tables exist
+    if not ensure_tables_exist(catalog, trino_mgr):
         print("[FATAL] Table setup failed. Exiting.")
         trino_mgr.close()
         sys.exit(1)
     
     # Initialize Kafka
-    consumer = create_consumer()
+    topics = [m.kafka_topic for m in TOPIC_TABLE_MAPPINGS]
+    consumer = create_consumer(topics)
     dlq_producer = create_dlq_producer()
-    avro_deserializer = create_avro_deserializer()
-    dlq_serializer = create_dlq_serializer()
+    deserializers = create_deserializers(TOPIC_TABLE_MAPPINGS)
     
-    batch_processor = BatchProcessor(catalog, consumer, dlq_producer, dlq_serializer)
+    # Initialize batch processor
+    batch_processor = MultiBatchProcessor(
+        catalog, consumer, dlq_producer, TOPIC_TABLE_MAPPINGS
+    )
     
     print(f"\n[INFO] Starting ETL pipeline...")
     print(f"[INFO] Batch size: {BATCH_SIZE} messages")
     print(f"[INFO] Batch timeout: {BATCH_TIMEOUT_SECONDS} seconds")
     print(f"[INFO] Press Ctrl+C to stop.\n")
     
+    message_counts: Dict[str, int] = {m.kafka_topic: 0 for m in TOPIC_TABLE_MAPPINGS}
+    
     try:
-        message_count = 0
-        
         while True:
             msg = consumer.poll(1.0)
             
             # Check if we should flush based on timeout
             if batch_processor.should_flush():
-                batch_processor.flush()
+                batch_processor.flush_all()
             
             if msg is None:
                 continue
@@ -526,43 +673,63 @@ def main():
                 print(f"[ERROR] Consumer error: {msg.error()}")
                 continue
             
-            # Deserialize message
+            topic = msg.topic()
+            
+            # Get the appropriate deserializer and mapping
+            if topic not in deserializers:
+                print(f"[WARN] Unknown topic {topic}, skipping")
+                continue
+            
+            deserializer = deserializers[topic]
+            mapping = TOPIC_TO_MAPPING[topic]
+            
             try:
-                raw_event = avro_deserializer(
+                # Deserialize message
+                avro_record = deserializer(
                     msg.value(),
-                    SerializationContext(msg.topic(), MessageField.VALUE),
+                    SerializationContext(topic, MessageField.VALUE),
                 )
                 
+                if avro_record is None:
+                    continue
+                
                 # Transform to Iceberg schema
-                iceberg_record = transform_to_iceberg_record(raw_event)
+                iceberg_record = mapping.transform_fn(avro_record)
                 
                 # Add to batch
-                batch_processor.add_record(iceberg_record, msg)
-                message_count += 1
+                batch_processor.add_record(topic, iceberg_record, msg)
+                message_counts[topic] += 1
                 
-                print(f"[RECEIVED] Message {message_count}: event_id={raw_event['event_id']}")
+                # Get a readable ID for logging
+                event_id = avro_record.get('event_id', 'unknown')
+                print(f"[RECEIVED] {topic} #{message_counts[topic]}: event_id={event_id}")
                 
                 # Check if batch is full
                 if batch_processor.should_flush():
-                    batch_processor.flush()
+                    batch_processor.flush_all()
                 
             except Exception as e:
-                print(f"[ERROR] Failed to process message: {e}")
-                batch_processor.send_to_dlq(msg, str(e))
-                # Commit the failed message offset so we don't reprocess it
-                consumer.commit(message=msg)
+                print(f"[ERROR] Failed to process message from {topic}: {e}")
+                batch_processor.send_to_dlq(topic, msg, str(e))
+                continue
     
     except KeyboardInterrupt:
         print("\n[INFO] Shutdown signal received")
     
     finally:
         # Flush any remaining records
-        if batch_processor.batch:
-            print("[INFO] Flushing remaining records...")
+        pending = batch_processor.get_pending_count()
+        if pending > 0:
+            print(f"[INFO] Flushing {pending} remaining records...")
             try:
-                batch_processor.flush()
+                batch_processor.flush_all()
             except Exception as e:
-                print(f"[ERROR] Failed to flush final batch: {e}")
+                print(f"[ERROR] Failed to flush remaining records: {e}")
+        
+        # Print final stats
+        print("\n[STATS] Messages processed:")
+        for topic, count in message_counts.items():
+            print(f"  - {topic}: {count}")
         
         print("[INFO] Closing consumer...")
         consumer.close()
