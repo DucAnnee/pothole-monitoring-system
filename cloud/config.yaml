@@ -53,7 +53,7 @@ depth_model:
 processing:
   # Depth conversion parameters
   depth_min_cm: 1.0
-  depth_max_cm: 15.0
+  depth_max_cm: 50.0
   
   # Confidence estimation parameters
   confidence_min: 0.75

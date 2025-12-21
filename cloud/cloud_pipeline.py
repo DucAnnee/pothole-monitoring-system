@@ -45,8 +45,11 @@ RAW_EVENT_SCHEMA_STR = """
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
-    {"name": "image_path", "type": "string"},
-    {"name": "pothole_polygon", "type": "string"},
+    {"name": "raw_image_path", "type": "string"},
+    {"name": "bev_image_path", "type": ["null", "string"], "default": null},
+    {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
+    {"name": "bev_mask", "type": ["null", {"type": "array", "items": {"type": "array", "items": "double"}}], "default": null},
+    {"name": "surface_area_cm2", "type": "double"},
     {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
@@ -267,41 +270,6 @@ def download_image_from_minio(client, s3_path, bucket):
         return None
 
 
-def get_bev_image_path(image_path):
-    """
-    Convert regular image path to BEV image path.
-    Example: raw_images/xxx.jpg -> bev_images/xxx_bev.jpg
-    """
-    # Parse the path
-    if image_path.startswith("s3://"):
-        # Remove s3://bucket/ prefix
-        path = image_path.split("/", 3)[-1] if "/" in image_path else image_path
-    else:
-        path = image_path
-
-    # Split into directory and filename
-    parts = path.rsplit("/", 1)
-    if len(parts) == 2:
-        directory, filename = parts
-    else:
-        directory = ""
-        filename = parts[0]
-
-    # Replace directory and add _bev suffix
-    name, ext = os.path.splitext(filename)
-    bev_filename = f"{name}_bev{ext}"
-
-    # Construct BEV path
-    if directory:
-        # Replace 'raw_images' with 'bev_images' or similar
-        bev_directory = directory.replace("raw_images", "bev_images")
-        bev_path = f"{bev_directory}/{bev_filename}"
-    else:
-        bev_path = bev_filename
-
-    return bev_path
-
-
 # ============================================================================
 # KAFKA SETUP
 # ============================================================================
@@ -419,16 +387,21 @@ def main():
                     continue
 
                 event_id = raw_event["event_id"]
-                image_path = raw_event["image_path"]
+                image_path = raw_event["raw_image_path"]
+                surface_area = raw_event.get("surface_area_cm2")
+                detection_conf = raw_event.get("detection_confidence")
                 message_count += 1
 
                 print(f"\n[RECEIVED #{message_count}] event_id={event_id}")
+                print(
+                    f"[INFO] Surface area: {surface_area:.2f} cm², Detection confidence: {detection_conf:.4f}"
+                )
 
                 # Try to get BEV image first
                 image_bytes = None
-                bev_path = get_bev_image_path(image_path)
+                bev_path = raw_event.get("bev_image_path")
 
-                if config.get_use_bev_image():
+                if config.get_use_bev_image() and bev_path is not None:
                     print(f"[INFO] Attempting to download BEV image: {bev_path}")
                     image_bytes = download_image_from_minio(
                         minio_client, bev_path, config.get_minio_bucket()
