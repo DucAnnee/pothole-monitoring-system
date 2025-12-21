@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { MapView } from "@/components/MapView";
-import { PotholeDetails } from "@/components/PotholeDetails";
-import { potholes, type Pothole } from "@/components/PotholeData";
+import { PotholeDetailsPanel } from "@/components/PotholeDetails";
 import {
   Box,
   Card,
   CardContent,
   IconButton,
   Typography,
+  CircularProgress,
 } from "@mui/material";
 import {
   AlertCircle,
@@ -18,8 +18,17 @@ import {
   ChevronUp,
   ArrowLeft,
   LogOut,
+  RefreshCw,
 } from "lucide-react";
 import { useAuth } from "./auth/AuthContext";
+import {
+  getMapView,
+  getPotholeDetail,
+  type MapPothole,
+  type PotholeDetail,
+  type SeverityLevel,
+  SEVERITY_COLORS,
+} from "@/lib/api";
 
 interface MapViewDashboardProps {
   onNavigateToOverview: () => void;
@@ -27,21 +36,63 @@ interface MapViewDashboardProps {
 
 export function MapViewDashboard({ onNavigateToOverview }: MapViewDashboardProps) {
   const { logout } = useAuth();
-  const [selectedPothole, setSelectedPothole] = useState<Pothole | null>(null);
+  const [potholes, setPotholes] = useState<MapPothole[]>([]);
+  const [selectedPothole, setSelectedPothole] = useState<PotholeDetail | null>(null);
   const [isLegendExpanded, setIsLegendExpanded] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handlePotholeClick = useCallback((pothole: Pothole) => {
-    setSelectedPothole(pothole);
+  // Fetch potholes from API
+  const fetchPotholes = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await getMapView();
+      setPotholes(response.potholes);
+    } catch (err) {
+      console.error('Failed to fetch potholes:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load potholes');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Initial fetch
+  useEffect(() => {
+    fetchPotholes();
+  }, [fetchPotholes]);
+
+  const handlePotholeClick = useCallback(async (pothole: MapPothole) => {
+    setIsLoadingDetail(true);
+    try {
+      const detail = await getPotholeDetail(pothole.pothole_id);
+      setSelectedPothole(detail);
+    } catch (err) {
+      console.error('Failed to fetch pothole detail:', err);
+      setSelectedPothole(null);
+    } finally {
+      setIsLoadingDetail(false);
+    }
   }, []);
 
   const handleCloseDetails = useCallback(() => {
     setSelectedPothole(null);
   }, []);
 
-  // Calculate stats
-  const criticalCount = potholes.filter((p) => p.severity >= 8).length;
-  const moderateCount = potholes.filter((p) => p.severity >= 5 && p.severity < 8).length;
-  const minorCount = potholes.filter((p) => p.severity < 5).length;
+  // Calculate stats by severity level
+  const severityCounts: Record<SeverityLevel, number> = {
+    CRITICAL: 0,
+    HIGH: 0,
+    MODERATE: 0,
+    MINOR: 0,
+  };
+  
+  potholes.forEach((p) => {
+    if (p.severity_level in severityCounts) {
+      severityCounts[p.severity_level]++;
+    }
+  });
 
   return (
     <Box sx={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'grey.50' }}>
@@ -106,32 +157,52 @@ export function MapViewDashboard({ onNavigateToOverview }: MapViewDashboardProps
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Card sx={{ px: 2, py: 1, bgcolor: '#fef2f2', borderColor: '#fecaca' }}>
+            {/* Refresh button */}
+            <IconButton
+              onClick={fetchPotholes}
+              disabled={isLoading}
+              sx={{ color: 'grey.600' }}
+            >
+              <RefreshCw style={{ width: 20, height: 20 }} className={isLoading ? 'animate-spin' : ''} />
+            </IconButton>
+
+            {/* Severity counts */}
+            <Card sx={{ px: 2, py: 1, bgcolor: SEVERITY_COLORS.CRITICAL.bg, borderColor: '#fecaca' }}>
               <CardContent sx={{ p: '0 !important', display: 'flex', alignItems: 'center', gap: 1 }}>
-                <AlertCircle style={{ width: 20, height: 20, color: '#ef4444' }} />
+                <AlertCircle style={{ width: 20, height: 20, color: SEVERITY_COLORS.CRITICAL.primary }} />
                 <Box>
                   <Typography sx={{ color: 'grey.500', fontSize: '0.875rem' }}>Critical</Typography>
-                  <Typography sx={{ color: '#dc2626', fontWeight: 500 }}>{criticalCount} potholes</Typography>
+                  <Typography sx={{ color: SEVERITY_COLORS.CRITICAL.secondary, fontWeight: 500 }}>{severityCounts.CRITICAL} potholes</Typography>
                 </Box>
               </CardContent>
             </Card>
 
-            <Card sx={{ px: 2, py: 1, bgcolor: '#fff7ed', borderColor: '#fed7aa' }}>
+            <Card sx={{ px: 2, py: 1, bgcolor: SEVERITY_COLORS.HIGH.bg, borderColor: '#fed7aa' }}>
               <CardContent sx={{ p: '0 !important', display: 'flex', alignItems: 'center', gap: 1 }}>
-                <AlertCircle style={{ width: 20, height: 20, color: '#f97316' }} />
+                <AlertCircle style={{ width: 20, height: 20, color: SEVERITY_COLORS.HIGH.primary }} />
+                <Box>
+                  <Typography sx={{ color: 'grey.500', fontSize: '0.875rem' }}>High</Typography>
+                  <Typography sx={{ color: SEVERITY_COLORS.HIGH.secondary, fontWeight: 500 }}>{severityCounts.HIGH} potholes</Typography>
+                </Box>
+              </CardContent>
+            </Card>
+
+            <Card sx={{ px: 2, py: 1, bgcolor: SEVERITY_COLORS.MODERATE.bg, borderColor: '#fde047' }}>
+              <CardContent sx={{ p: '0 !important', display: 'flex', alignItems: 'center', gap: 1 }}>
+                <AlertCircle style={{ width: 20, height: 20, color: SEVERITY_COLORS.MODERATE.primary }} />
                 <Box>
                   <Typography sx={{ color: 'grey.500', fontSize: '0.875rem' }}>Moderate</Typography>
-                  <Typography sx={{ color: '#ea580c', fontWeight: 500 }}>{moderateCount} potholes</Typography>
+                  <Typography sx={{ color: SEVERITY_COLORS.MODERATE.secondary, fontWeight: 500 }}>{severityCounts.MODERATE} potholes</Typography>
                 </Box>
               </CardContent>
             </Card>
 
-            <Card sx={{ px: 2, py: 1, bgcolor: '#fefce8', borderColor: '#fde047' }}>
+            <Card sx={{ px: 2, py: 1, bgcolor: SEVERITY_COLORS.MINOR.bg, borderColor: '#bbf7d0' }}>
               <CardContent sx={{ p: '0 !important', display: 'flex', alignItems: 'center', gap: 1 }}>
-                <AlertCircle style={{ width: 20, height: 20, color: '#eab308' }} />
+                <AlertCircle style={{ width: 20, height: 20, color: SEVERITY_COLORS.MINOR.primary }} />
                 <Box>
                   <Typography sx={{ color: 'grey.500', fontSize: '0.875rem' }}>Minor</Typography>
-                  <Typography sx={{ color: '#ca8a04', fontWeight: 500 }}>{minorCount} potholes</Typography>
+                  <Typography sx={{ color: SEVERITY_COLORS.MINOR.secondary, fontWeight: 500 }}>{severityCounts.MINOR} potholes</Typography>
                 </Box>
               </CardContent>
             </Card>
@@ -169,11 +240,53 @@ export function MapViewDashboard({ onNavigateToOverview }: MapViewDashboardProps
       <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Map Container */}
         <Box sx={{ flex: 1, position: 'relative' }}>
-          <MapView
-            potholes={potholes}
-            selectedPothole={selectedPothole}
-            onPotholeClick={handlePotholeClick}
-          />
+          {isLoading ? (
+            <Box sx={{ 
+              width: '100%', 
+              height: '100%', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              bgcolor: 'grey.100',
+            }}>
+              <CircularProgress sx={{ color: '#84cc16' }} />
+            </Box>
+          ) : error ? (
+            <Box sx={{ 
+              width: '100%', 
+              height: '100%', 
+              display: 'flex', 
+              flexDirection: 'column',
+              alignItems: 'center', 
+              justifyContent: 'center',
+              bgcolor: 'grey.100',
+              gap: 2,
+            }}>
+              <Typography color="error">{error}</Typography>
+              <Box
+                component="button"
+                onClick={fetchPotholes}
+                sx={{
+                  px: 3,
+                  py: 1,
+                  bgcolor: '#84cc16',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 1.5,
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                Retry
+              </Box>
+            </Box>
+          ) : (
+            <MapView
+              potholes={potholes}
+              selectedPotholeId={selectedPothole?.pothole_id ?? null}
+              onPotholeClick={handlePotholeClick}
+            />
+          )}
 
           {/* Legend */}
           <Card
@@ -205,16 +318,20 @@ export function MapViewDashboard({ onNavigateToOverview }: MapViewDashboardProps
               <Box sx={{ px: 2, pb: 2 }}>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Box sx={{ width: 32, height: 32, bgcolor: '#ef4444', borderRadius: '50%' }} />
-                    <Typography sx={{ color: 'grey.600' }}>Critical (8–10)</Typography>
+                    <Box sx={{ width: 16, height: 16, bgcolor: SEVERITY_COLORS.CRITICAL.primary, borderRadius: '50%' }} />
+                    <Typography sx={{ color: 'grey.600' }}>Critical</Typography>
                   </Box>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Box sx={{ width: 24, height: 24, bgcolor: '#f97316', borderRadius: '50%' }} />
-                    <Typography sx={{ color: 'grey.600' }}>Moderate (5–7)</Typography>
+                    <Box sx={{ width: 14, height: 14, bgcolor: SEVERITY_COLORS.HIGH.primary, borderRadius: '50%' }} />
+                    <Typography sx={{ color: 'grey.600' }}>High</Typography>
                   </Box>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Box sx={{ width: 16, height: 16, bgcolor: '#eab308', borderRadius: '50%' }} />
-                    <Typography sx={{ color: 'grey.600' }}>Minor (1–4)</Typography>
+                    <Box sx={{ width: 12, height: 12, bgcolor: SEVERITY_COLORS.MODERATE.primary, borderRadius: '50%' }} />
+                    <Typography sx={{ color: 'grey.600' }}>Moderate</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ width: 10, height: 10, bgcolor: SEVERITY_COLORS.MINOR.primary, borderRadius: '50%' }} />
+                    <Typography sx={{ color: 'grey.600' }}>Minor</Typography>
                   </Box>
                 </Box>
                 <Box sx={{ mt: 1.5, pt: 1.5, borderTop: '1px solid', borderColor: 'grey.200' }}>
@@ -228,9 +345,21 @@ export function MapViewDashboard({ onNavigateToOverview }: MapViewDashboardProps
         </Box>
 
         {/* Details Panel */}
-        {selectedPothole && (
+        {(selectedPothole || isLoadingDetail) && (
           <Box sx={{ width: 384, borderLeft: '1px solid', borderColor: 'grey.200', bgcolor: 'background.paper', boxShadow: '-4px 0 15px -3px rgb(0 0 0 / 0.1)' }}>
-            <PotholeDetails pothole={selectedPothole} onClose={handleCloseDetails} />
+            {isLoadingDetail ? (
+              <Box sx={{ 
+                width: '100%', 
+                height: '100%', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+              }}>
+                <CircularProgress sx={{ color: '#84cc16' }} size={32} />
+              </Box>
+            ) : selectedPothole ? (
+              <PotholeDetailsPanel pothole={selectedPothole} onClose={handleCloseDetails} />
+            ) : null}
           </Box>
         )}
       </Box>

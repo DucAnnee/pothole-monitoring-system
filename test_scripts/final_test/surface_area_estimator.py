@@ -1,9 +1,25 @@
 """
 Surface Area Estimation Simulator
 
+⚠️ DEPRECATED: This service is deprecated as of the schema v2 update.
+Surface area is now computed at the edge device and included directly
+in the pothole.raw.events.v1 topic as 'surface_area_cm2'.
+
+This file is kept for reference and backward compatibility with older
+data that may still flow through pothole.surface.area.v1 topic.
+
+---
+Original description:
 Consumes raw events from 'pothole.raw.events.v1', simulates surface area
 calculation from the image/polygon, and produces results to 'pothole.surface.area.v1'.
 """
+
+import warnings
+warnings.warn(
+    "surface_area_estimator.py is deprecated. "
+    "Surface area is now computed at edge and included in raw events.",
+    DeprecationWarning
+)
 
 import time
 import json
@@ -39,6 +55,7 @@ AREA_MAX_CM2 = 5000.0
 
 # ============================================================================
 # AVRO SCHEMAS
+# Note: Updated to match new schema but this service is deprecated
 # ============================================================================
 RAW_EVENT_SCHEMA_STR = """
 {
@@ -52,8 +69,11 @@ RAW_EVENT_SCHEMA_STR = """
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
-    {"name": "image_path", "type": "string"},
-    {"name": "pothole_polygon", "type": "string"},
+    {"name": "raw_image_path", "type": "string"},
+    {"name": "bev_image_path", "type": ["null", "string"], "default": null},
+    {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
+    {"name": "bev_mask", "type": ["null", {"type": "array", "items": {"type": "array", "items": "double"}}], "default": null},
+    {"name": "surface_area_cm2", "type": "double"},
     {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }

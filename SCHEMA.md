@@ -135,7 +135,7 @@ CREATE TABLE iceberg.city.severity_scores (
     
     depth_cm DOUBLE NOT NULL COMMENT 'Estimated depth in centimeters',
     surface_area_cm2 DOUBLE NOT NULL COMMENT 'Estimated surface area',
-    severity_score DOUBLE NOT NULL COMMENT 'Calculated severity (0-1 scale?)',
+    severity_score DOUBLE NOT NULL COMMENT 'Calculated severity (1-10 scale)',
     severity_level VARCHAR NOT NULL COMMENT 'MINOR/MODERATE/HIGH/CRITICAL',
     
     calculated_at TIMESTAMP(3) NOT NULL COMMENT 'When severity was calculated'

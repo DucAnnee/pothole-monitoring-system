@@ -1,6 +1,7 @@
 'use client';
 
-import { Box, Typography, Paper } from '@mui/material';
+import { useState, useEffect } from 'react';
+import { Box, Typography, Paper, CircularProgress } from '@mui/material';
 import {
   TrendingUp,
   TrendingDown,
@@ -11,37 +12,31 @@ import {
   Activity,
   Route,
   LogOut,
+  RefreshCw,
 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
+import { getSummary, type SummaryResponse, SEVERITY_COLORS } from '@/lib/api';
 
-// Hardcoded realistic sample data
-const dashboardData = {
-  totalActivePotholes: 147,
-  newToday: 12,
-  newThisWeek: 43,
-  resolvedToday: 8,
-  resolvedThisWeek: 31,
-  netChange: 12, // positive = increase
-  averageSeverity: 5.8,
-  roadsAffectedPercent: 3.2,
-  // 30-day active potholes over time (cumulative count)
-  activePotholesHistory: [
-    112, 115, 118, 121, 119, 122, 125, 128, 126, 129,
-    132, 135, 133, 136, 139, 141, 138, 140, 143, 146,
-    144, 147, 145, 148, 150, 149, 152, 150, 148, 147
-  ],
-  // 30-day severity trend
-  severityTrend: [
-    5.2, 5.4, 5.3, 5.6, 5.5, 5.7, 5.4, 5.8, 5.6, 5.5,
-    5.7, 5.9, 5.6, 5.4, 5.8, 5.7, 5.9, 5.6, 5.8, 5.7,
-    5.5, 5.8, 5.6, 5.9, 5.7, 5.8, 5.6, 5.9, 5.7, 5.8
-  ],
-  // Severity distribution
+// Default/fallback data
+const defaultData = {
+  totalActivePotholes: 0,
+  newToday: 0,
+  newThisWeek: 0,
+  resolvedThisWeek: 0,
+  netChange: 0,
+  averageSeverity: 0,
+  activePotholesHistory: new Array(30).fill(0),
+  severityTrend: new Array(30).fill(0),
   severityDistribution: {
-    critical: 23,
-    moderate: 68,
-    minor: 56,
+    CRITICAL: 0,
+    HIGH: 0,
+    MODERATE: 0,
+    MINOR: 0,
   },
+  newTodayComparison: '+0 vs yesterday',
+  newWeekComparison: '+0 vs last week',
+  reportedToInProgressThisWeek: 0,
+  inProgressToFixedThisWeek: 0,
 };
 
 // Line chart component for active potholes over time
@@ -139,11 +134,12 @@ function ActivePotholesChart({ data }: { data: number[] }) {
 }
 
 // Pie chart component for severity distribution
-function SeverityPieChart() {
+function SeverityPieChart({ distribution }: { distribution: { CRITICAL: number; HIGH: number; MODERATE: number; MINOR: number } }) {
   const data = [
-    { label: 'Critical', value: dashboardData.severityDistribution.critical, color: '#ef4444' },
-    { label: 'Moderate', value: dashboardData.severityDistribution.moderate, color: '#f97316' },
-    { label: 'Minor', value: dashboardData.severityDistribution.minor, color: '#eab308' },
+    { label: 'Critical', value: distribution.CRITICAL, color: SEVERITY_COLORS.CRITICAL.primary },
+    { label: 'High', value: distribution.HIGH, color: SEVERITY_COLORS.HIGH.primary },
+    { label: 'Moderate', value: distribution.MODERATE, color: SEVERITY_COLORS.MODERATE.primary },
+    { label: 'Minor', value: distribution.MINOR, color: SEVERITY_COLORS.MINOR.primary },
   ];
   
   const total = data.reduce((sum, d) => sum + d.value, 0);
@@ -372,8 +368,8 @@ function KPITile({
 }
 
 // Net change indicator component
-function NetChangeIndicator() {
-  const isIncrease = dashboardData.netChange > 0;
+function NetChangeIndicator({ netChange }: { netChange: number }) {
+  const isIncrease = netChange > 0;
   
   return (
     <Paper
@@ -430,7 +426,7 @@ function NetChangeIndicator() {
               color: isIncrease ? '#dc2626' : '#16a34a',
             }}
           >
-            {isIncrease ? '+' : ''}{dashboardData.netChange}
+            {isIncrease ? '+' : ''}{netChange}
           </Typography>
           <Typography sx={{ fontSize: '0.7rem', color: 'grey.600', mt: 0.25 }}>
             {isIncrease ? 'More than resolved' : 'More resolved'}
@@ -448,6 +444,94 @@ interface ExecutiveOverviewProps {
 
 export function ExecutiveOverview({ onNavigateToMap, onNavigateToHealth }: ExecutiveOverviewProps) {
   const { logout } = useAuth();
+  const [dashboardData, setDashboardData] = useState(defaultData);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchDashboardData = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const summary = await getSummary();
+      
+      // Transform API response to dashboard format
+      const activePotholesHistory = summary.activePotholesLast30Days.map(d => d.count);
+      const netChange = summary.activePotholes.trend.thisWeek.count - summary.statusChanges.inProgressToFixed.thisWeek;
+      
+      setDashboardData({
+        totalActivePotholes: summary.activePotholes.count,
+        newToday: summary.activePotholes.trend.today.count,
+        newThisWeek: summary.activePotholes.trend.thisWeek.count,
+        resolvedThisWeek: summary.statusChanges.inProgressToFixed.thisWeek,
+        netChange,
+        averageSeverity: summary.averageSeverity,
+        activePotholesHistory,
+        severityTrend: activePotholesHistory, // Use same data for now
+        severityDistribution: summary.severityDistribution,
+        newTodayComparison: summary.activePotholes.trend.today.comparison,
+        newWeekComparison: summary.activePotholes.trend.thisWeek.comparison,
+        reportedToInProgressThisWeek: summary.statusChanges.reportedToInProgress.thisWeek,
+        inProgressToFixedThisWeek: summary.statusChanges.inProgressToFixed.thisWeek,
+      });
+    } catch (err) {
+      console.error('Failed to fetch dashboard data:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  if (isLoading) {
+    return (
+      <Box sx={{ 
+        width: '100vw', 
+        height: '100vh', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        bgcolor: 'grey.50',
+      }}>
+        <CircularProgress sx={{ color: '#84cc16' }} />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return (
+      <Box sx={{ 
+        width: '100vw', 
+        height: '100vh', 
+        display: 'flex', 
+        flexDirection: 'column',
+        alignItems: 'center', 
+        justifyContent: 'center',
+        bgcolor: 'grey.50',
+        gap: 2,
+      }}>
+        <Typography color="error">{error}</Typography>
+        <Box
+          component="button"
+          onClick={fetchDashboardData}
+          sx={{
+            px: 3,
+            py: 1,
+            bgcolor: '#84cc16',
+            color: 'white',
+            border: 'none',
+            borderRadius: 1.5,
+            fontWeight: 500,
+            cursor: 'pointer',
+          }}
+        >
+          Retry
+        </Box>
+      </Box>
+    );
+  }
   
   return (
     <Box
@@ -600,17 +684,16 @@ export function ExecutiveOverview({ onNavigateToMap, onNavigateToHealth }: Execu
         <KPITile
           title="New Today"
           value={dashboardData.newToday}
-          trend="+3 vs yesterday"
-          trendDirection="up"
+          trend={dashboardData.newTodayComparison}
+          trendDirection={dashboardData.newTodayComparison.startsWith('+') && !dashboardData.newTodayComparison.startsWith('+0') ? 'up' : dashboardData.newTodayComparison.startsWith('-') ? 'down' : 'neutral'}
           icon={Plus}
           iconBgColor="#fff7ed"
           iconColor="#f97316"
         />
         
         <KPITile
-          title="Resolved Today"
-          value={dashboardData.resolvedToday}
-          trend="+2 vs yesterday"
+          title="Resolved This Week"
+          value={dashboardData.resolvedThisWeek}
           trendDirection="down"
           icon={CheckCircle}
           iconBgColor="#f0fdf4"
@@ -629,11 +712,9 @@ export function ExecutiveOverview({ onNavigateToMap, onNavigateToHealth }: Execu
         />
         
         <KPITile
-          title="Roads Affected"
-          value={dashboardData.roadsAffectedPercent}
-          unit="%"
-          trend="+0.2% this week"
-          trendDirection="up"
+          title="In Progress"
+          value={dashboardData.reportedToInProgressThisWeek}
+          unit="this week"
           icon={Route}
           iconBgColor="#f5f5f5"
           iconColor="#6b7280"
@@ -698,7 +779,7 @@ export function ExecutiveOverview({ onNavigateToMap, onNavigateToHealth }: Execu
               Severity Distribution
             </Typography>
             <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <SeverityPieChart />
+              <SeverityPieChart distribution={dashboardData.severityDistribution} />
             </Box>
           </Paper>
 
@@ -707,13 +788,13 @@ export function ExecutiveOverview({ onNavigateToMap, onNavigateToHealth }: Execu
             <KPITile
               title="New This Week"
               value={dashboardData.newThisWeek}
-              trend="+8 vs last week"
-              trendDirection="up"
+              trend={dashboardData.newWeekComparison}
+              trendDirection={dashboardData.newWeekComparison.startsWith('+') && !dashboardData.newWeekComparison.startsWith('+0') ? 'up' : dashboardData.newWeekComparison.startsWith('-') ? 'down' : 'neutral'}
               icon={Plus}
               iconBgColor="#fefce8"
               iconColor="#eab308"
             />
-            <NetChangeIndicator />
+            <NetChangeIndicator netChange={dashboardData.netChange} />
           </Box>
         </Box>
       </Box>

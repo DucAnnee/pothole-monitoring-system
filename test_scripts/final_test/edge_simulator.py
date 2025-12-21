@@ -48,8 +48,11 @@ RAW_EVENT_SCHEMA_STR = """
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
-    {"name": "image_path", "type": "string"},
-    {"name": "pothole_polygon", "type": "string"},
+    {"name": "raw_image_path", "type": "string"},
+    {"name": "bev_image_path", "type": ["null", "string"], "default": null},
+    {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
+    {"name": "bev_mask", "type": ["null", {"type": "array", "items": {"type": "array", "items": "double"}}], "default": null},
+    {"name": "surface_area_cm2", "type": "double"},
     {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
@@ -181,24 +184,68 @@ def generate_random_hcm_gps():
 
 
 def generate_pothole_polygon(center_lat, center_lon):
-    """Generate a dummy GeoJSON polygon around the GPS coordinates."""
-    # Create a small polygon (~1-2 meter radius) around the center point
-    offset = 0.00002  # Approx 2 meters in degrees
+    """
+    Generate a dummy polygon mask as list of [x, y] pixel coordinates.
+    Also returns simulated BEV mask and estimated surface area.
+    
+    Returns: (original_mask, bev_mask, surface_area_cm2)
+    """
+    # Generate a random pothole shape (irregular polygon with 6-10 vertices)
+    num_vertices = random.randint(6, 10)
+    
+    # Base radius in pixels (assuming 640x480 image, pothole ~50-150 pixel radius)
+    base_radius = random.uniform(50, 150)
+    center_x, center_y = 320, 240  # Center of image
+    
+    original_mask = []
+    for i in range(num_vertices):
+        angle = 2 * 3.14159 * i / num_vertices
+        # Add some randomness to radius for irregular shape
+        radius = base_radius * random.uniform(0.7, 1.3)
+        x = center_x + radius * random.uniform(0.8, 1.2) * (1 if i % 2 == 0 else -1) * abs(random.gauss(0.5, 0.2))
+        y = center_y + radius * random.uniform(0.8, 1.2) * (1 if i % 3 == 0 else -1) * abs(random.gauss(0.5, 0.2))
+        original_mask.append([round(x, 2), round(y, 2)])
+    
+    # Close the polygon
+    if original_mask:
+        original_mask.append(original_mask[0])
+    
+    # Simulate BEV transformation (scale by perspective factor)
+    # In real scenario, this would be computed from camera calibration
+    bev_scale = random.uniform(1.2, 1.8)  # BEV typically makes things larger
+    bev_mask = []
+    for point in original_mask:
+        bev_x = (point[0] - center_x) * bev_scale + center_x
+        bev_y = (point[1] - center_y) * bev_scale + center_y
+        bev_mask.append([round(bev_x, 2), round(bev_y, 2)])
+    
+    # Calculate surface area from BEV mask using shoelace formula
+    # Assume 1 pixel in BEV = 0.5 cm (calibrated camera)
+    pixel_to_cm = 0.5
+    surface_area_pixels = calculate_polygon_area(bev_mask)
+    surface_area_cm2 = surface_area_pixels * (pixel_to_cm ** 2)
+    
+    # Add some realistic bounds
+    surface_area_cm2 = max(50.0, min(5000.0, surface_area_cm2))
+    
+    return original_mask, bev_mask, round(surface_area_cm2, 2)
 
-    polygon = {
-        "type": "Polygon",
-        "coordinates": [
-            [
-                [center_lon - offset, center_lat - offset],
-                [center_lon + offset, center_lat - offset],
-                [center_lon + offset, center_lat + offset],
-                [center_lon - offset, center_lat + offset],
-                [center_lon - offset, center_lat - offset],  # Close the polygon
-            ]
-        ],
-    }
 
-    return json.dumps(polygon)
+def calculate_polygon_area(polygon):
+    """
+    Calculate polygon area using shoelace formula.
+    Polygon is list of [x, y] points.
+    """
+    n = len(polygon)
+    if n < 3:
+        return 0.0
+    
+    area = 0.0
+    for i in range(n - 1):  # -1 because last point = first point (closed)
+        area += polygon[i][0] * polygon[i + 1][1]
+        area -= polygon[i + 1][0] * polygon[i][1]
+    
+    return abs(area) / 2.0
 
 
 def load_image():
@@ -272,10 +319,16 @@ def main():
                 print("[WARN] Skipping Kafka publish due to MinIO failure.")
                 time.sleep(10)
                 continue
-
-            # Generate dummy pothole polygon
-            pothole_polygon = generate_pothole_polygon(gps_lat, gps_lon)
-
+            
+            # Generate pothole masks and compute surface area at edge
+            original_mask, bev_mask, surface_area_cm2 = generate_pothole_polygon(gps_lat, gps_lon)
+            
+            # BEV image path (in real scenario, edge device would also upload BEV image)
+            # For simulation, we'll set it to None
+            bev_image_path = None
+            
+            print(f"[MASK] Original mask points: {len(original_mask)}, Surface area: {surface_area_cm2} cm²")
+            
             # Create Avro record
             raw_event = {
                 "event_id": event_id,
@@ -284,8 +337,11 @@ def main():
                 "gps_lat": gps_lat,
                 "gps_lon": gps_lon,
                 "gps_accuracy": random.uniform(5.0, 15.0),  # meters
-                "image_path": s3_path,
-                "pothole_polygon": pothole_polygon,
+                "raw_image_path": s3_path,
+                "bev_image_path": bev_image_path,
+                "original_mask": original_mask,
+                "bev_mask": bev_mask,
+                "surface_area_cm2": surface_area_cm2,
                 "detection_confidence": random.uniform(0.85, 0.99),
             }
 

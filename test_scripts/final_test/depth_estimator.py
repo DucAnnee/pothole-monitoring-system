@@ -51,8 +51,11 @@ RAW_EVENT_SCHEMA_STR = """
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
-    {"name": "image_path", "type": "string"},
-    {"name": "pothole_polygon", "type": "string"},
+    {"name": "raw_image_path", "type": "string"},
+    {"name": "bev_image_path", "type": ["null", "string"], "default": null},
+    {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
+    {"name": "bev_mask", "type": ["null", {"type": "array", "items": {"type": "array", "items": "double"}}], "default": null},
+    {"name": "surface_area_cm2", "type": "double"},
     {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
@@ -267,13 +270,13 @@ def main():
                     continue
                 
                 event_id = raw_event["event_id"]
-                image_path = raw_event["image_path"]
+                raw_image_path = raw_event["raw_image_path"]
                 message_count += 1
                 
                 print(f"\n[RECEIVED #{message_count}] event_id={event_id}")
                 
                 # Download image from MinIO
-                image_bytes = download_image_from_minio(minio_client, image_path)
+                image_bytes = download_image_from_minio(minio_client, raw_image_path)
                 
                 if image_bytes is None:
                     print(f"[WARN] Could not download image, using placeholder estimation")

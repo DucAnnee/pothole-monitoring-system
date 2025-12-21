@@ -1,0 +1,21 @@
+import { Router } from 'express';
+import { getSummary } from '../controllers/summaryController.js';
+import { getMapView } from '../controllers/mapViewController.js';
+import { getPotholeById } from '../controllers/potholeController.js';
+import { getHealth } from '../controllers/healthController.js';
+
+const router = Router();
+
+// Health check endpoint
+router.get('/health', getHealth);
+
+// Dashboard summary
+router.get('/summary', getSummary);
+
+// Map view - potholes near a location
+router.get('/map-view', getMapView);
+
+// Individual pothole details
+router.get('/pothole/:pothole_id', getPotholeById);
+
+export default router;

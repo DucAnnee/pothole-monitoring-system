@@ -66,8 +66,11 @@ RAW_EVENT_AVRO_SCHEMA = """
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
-    {"name": "image_path", "type": "string"},
-    {"name": "pothole_polygon", "type": "string"},
+    {"name": "raw_image_path", "type": "string"},
+    {"name": "bev_image_path", "type": ["null", "string"], "default": null},
+    {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
+    {"name": "bev_mask", "type": ["null", {"type": "array", "items": {"type": "array", "items": "double"}}], "default": null},
+    {"name": "surface_area_cm2", "type": "double"},
     {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
@@ -83,7 +86,7 @@ SEVERITY_SCORE_AVRO_SCHEMA = """
     {"name": "depth_cm", "type": "double"},
     {"name": "surface_area_cm2", "type": "double"},
     {"name": "severity_score", "type": "double"},
-    {"name": "severity_level", "type": {"type": "enum", "name": "SeverityLevel", "symbols": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]}},
+    {"name": "severity_level", "type": {"type": "enum", "name": "SeverityLevel", "symbols": ["MINOR", "MODERATE", "HIGH", "CRITICAL"]}},
     {"name": "calculated_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
   ]
 }
@@ -102,7 +105,10 @@ RAW_EVENTS_ARROW_SCHEMA = pa.schema([
     pa.field("gps_lon", pa.float64(), nullable=False),
     pa.field("gps_accuracy", pa.float64(), nullable=True),  # Optional
     pa.field("raw_image_path", pa.string(), nullable=False),
-    pa.field("pothole_polygon", pa.string(), nullable=False),
+    pa.field("bev_image_path", pa.string(), nullable=True),  # Optional
+    pa.field("original_mask", pa.list_(pa.list_(pa.float64())), nullable=False),
+    pa.field("bev_mask", pa.list_(pa.list_(pa.float64())), nullable=True),  # Optional
+    pa.field("surface_area_cm2", pa.float64(), nullable=False),
     pa.field("detection_confidence", pa.float64(), nullable=True),  # Optional
     pa.field("ingested_at", pa.timestamp("us"), nullable=False),
 ])
@@ -132,7 +138,10 @@ CREATE TABLE IF NOT EXISTS iceberg.city.raw_events (
     gps_accuracy DOUBLE COMMENT 'GPS accuracy in meters',
     
     raw_image_path VARCHAR NOT NULL COMMENT 'S3 URI (s3://warehouse/raw_images/{event_id}.jpg)',
-    pothole_polygon VARCHAR NOT NULL COMMENT 'GeoJSON polygon from edge detection',
+    bev_image_path VARCHAR COMMENT 'S3 URI of birds-eye view transformed image',
+    original_mask ARRAY(ARRAY(DOUBLE)) NOT NULL COMMENT 'Polygon mask from edge detection [[x,y], ...]',
+    bev_mask ARRAY(ARRAY(DOUBLE)) COMMENT 'Polygon mask in BEV coordinates [[x,y], ...]',
+    surface_area_cm2 DOUBLE NOT NULL COMMENT 'Surface area computed at edge (cm²)',
     detection_confidence DOUBLE COMMENT 'Edge model confidence score',
     
     ingested_at TIMESTAMP(3) NOT NULL COMMENT 'When ingested into Iceberg'
@@ -149,8 +158,8 @@ CREATE TABLE IF NOT EXISTS iceberg.city.severity_scores (
     
     depth_cm DOUBLE NOT NULL COMMENT 'Estimated depth in centimeters',
     surface_area_cm2 DOUBLE NOT NULL COMMENT 'Estimated surface area',
-    severity_score DOUBLE NOT NULL COMMENT 'Calculated severity (0-1 scale)',
-    severity_level VARCHAR NOT NULL COMMENT 'LOW/MEDIUM/HIGH/CRITICAL',
+    severity_score DOUBLE NOT NULL COMMENT 'Calculated severity (1-10 scale)',
+    severity_level VARCHAR NOT NULL COMMENT 'MINOR/MODERATE/HIGH/CRITICAL',
     
     calculated_at TIMESTAMP(3) NOT NULL COMMENT 'When severity was calculated'
 )
@@ -192,8 +201,11 @@ def transform_raw_event(avro_record: Dict[str, Any]) -> Dict[str, Any]:
         "gps_lat": avro_record['gps_lat'],
         "gps_lon": avro_record['gps_lon'],
         "gps_accuracy": avro_record.get('gps_accuracy'),
-        "raw_image_path": avro_record['image_path'],
-        "pothole_polygon": avro_record['pothole_polygon'],
+        "raw_image_path": avro_record['raw_image_path'],
+        "bev_image_path": avro_record.get('bev_image_path'),
+        "original_mask": avro_record['original_mask'],
+        "bev_mask": avro_record.get('bev_mask'),
+        "surface_area_cm2": avro_record['surface_area_cm2'],
         "detection_confidence": avro_record.get('detection_confidence'),
         "ingested_at": now.replace(tzinfo=None),
     }

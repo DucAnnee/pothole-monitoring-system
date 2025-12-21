@@ -8,7 +8,7 @@ model_type: "yolo"
 
 # Video and Model paths
 video:
-  input_path: "assets/test_1.mp4"
+  input_path: "assets/test.mp4"
 
 models: 
   yolo:

@@ -10,3 +10,5 @@ authlib
 pyarrow
 s3fs
 pyiceberg-core
+h3
+redis

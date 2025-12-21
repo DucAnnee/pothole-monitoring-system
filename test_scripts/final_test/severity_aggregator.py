@@ -1,9 +1,12 @@
 """
 Severity Score Aggregator Microservice
 
-Consumes from 'pothole.depth.v1' and 'pothole.surface.area.v1',
+Consumes from 'pothole.depth.v1' and 'pothole.raw.events.v1' (for surface_area_cm2),
 aggregates by event_id, calculates severity score, and produces
 to 'pothole.severity.score.v1'.
+
+NOTE: As of schema v2, surface_area_cm2 is computed at the edge device
+and included in the raw events. The pothole.surface.area.v1 topic is deprecated.
 """
 
 import time
@@ -22,7 +25,7 @@ from confluent_kafka.schema_registry.avro import AvroSerializer, AvroDeserialize
 # ============================================================================
 # Kafka
 DEPTH_TOPIC = "pothole.depth.v1"
-SURFACE_AREA_TOPIC = "pothole.surface.area.v1"
+RAW_EVENTS_TOPIC = "pothole.raw.events.v1"  # For surface_area_cm2
 OUTPUT_TOPIC = "pothole.severity.score.v1"
 CONSUMER_GROUP_ID = "severity-aggregator-group"
 BOOTSTRAP_SERVERS = "localhost:19092,localhost:29092,localhost:39092"
@@ -49,16 +52,25 @@ DEPTH_ESTIMATE_SCHEMA_STR = """
 }
 """
 
-SURFACE_AREA_SCHEMA_STR = """
+# Raw events schema (for extracting surface_area_cm2)
+RAW_EVENT_SCHEMA_STR = """
 {
   "type": "record",
-  "name": "SurfaceAreaEstimate",
-  "namespace": "pothole.surface.v1",
+  "name": "RawEvent",
+  "namespace": "pothole.raw.v1",
   "fields": [
     {"name": "event_id", "type": "string"},
+    {"name": "vehicle_id", "type": "string"},
+    {"name": "timestamp", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+    {"name": "gps_lat", "type": "double"},
+    {"name": "gps_lon", "type": "double"},
+    {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
+    {"name": "raw_image_path", "type": "string"},
+    {"name": "bev_image_path", "type": ["null", "string"], "default": null},
+    {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
+    {"name": "bev_mask", "type": ["null", {"type": "array", "items": {"type": "array", "items": "double"}}], "default": null},
     {"name": "surface_area_cm2", "type": "double"},
-    {"name": "confidence", "type": ["null", "double"], "default": null},
-    {"name": "processed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+    {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
 """
@@ -73,7 +85,7 @@ SEVERITY_SCORE_SCHEMA_STR = """
     {"name": "depth_cm", "type": "double"},
     {"name": "surface_area_cm2", "type": "double"},
     {"name": "severity_score", "type": "double"},
-    {"name": "severity_level", "type": {"type": "enum", "name": "SeverityLevel", "symbols": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]}},
+    {"name": "severity_level", "type": {"type": "enum", "name": "SeverityLevel", "symbols": ["MINOR", "MODERATE", "HIGH", "CRITICAL"]}},
     {"name": "calculated_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
   ]
 }
@@ -83,44 +95,117 @@ SEVERITY_SCORE_SCHEMA_STR = """
 # ============================================================================
 # SEVERITY CALCULATION
 # ============================================================================
+def map_area_to_discrete(surface_area_cm2: float) -> int:
+    """
+    Map surface area (cm²) to discrete value 1-10.
+    
+    Thresholds:
+    - 0 <= area < 300 → 1
+    - 300 <= area < 700 → 2
+    - 700 <= area < 1200 → 3
+    - 1200 <= area < 2500 → 4
+    - 2500 <= area < 5000 → 5
+    - 5000 <= area < 10000 → 6
+    - 10000 <= area < 15000 → 7
+    - 15000 <= area < 25000 → 8
+    - 25000 <= area < 45000 → 9
+    - 45000 <= area → 10
+    """
+    if surface_area_cm2 < 300:
+        return 1
+    elif surface_area_cm2 < 700:
+        return 2
+    elif surface_area_cm2 < 1200:
+        return 3
+    elif surface_area_cm2 < 2500:
+        return 4
+    elif surface_area_cm2 < 5000:
+        return 5
+    elif surface_area_cm2 < 10000:
+        return 6
+    elif surface_area_cm2 < 15000:
+        return 7
+    elif surface_area_cm2 < 25000:
+        return 8
+    elif surface_area_cm2 < 45000:
+        return 9
+    else:
+        return 10
+
+
+def map_depth_to_discrete(depth_cm: float) -> int:
+    """
+    Map depth (cm) to discrete value 1-10.
+    
+    Thresholds:
+    - 0 <= depth < 1 → 1
+    - 1 <= depth < 2.5 → 2
+    - 2.5 <= depth < 5 → 3
+    - 5 <= depth < 7.5 → 4
+    - 7.5 <= depth < 10 → 5
+    - 10 <= depth < 12.5 → 6
+    - 12.5 <= depth < 15 → 7
+    - 15 <= depth < 20 → 8
+    - 20 <= depth < 25 → 9
+    - 25 <= depth → 10
+    """
+    if depth_cm < 1:
+        return 1
+    elif depth_cm < 2.5:
+        return 2
+    elif depth_cm < 5:
+        return 3
+    elif depth_cm < 7.5:
+        return 4
+    elif depth_cm < 10:
+        return 5
+    elif depth_cm < 12.5:
+        return 6
+    elif depth_cm < 15:
+        return 7
+    elif depth_cm < 20:
+        return 8
+    elif depth_cm < 25:
+        return 9
+    else:
+        return 10
+
+
 def calculate_severity_score(depth_cm: float, surface_area_cm2: float) -> float:
     """
     Calculate severity score based on depth and surface area.
     
-    Formula considers:
-    - Depth: Deeper potholes are more dangerous (weighted heavily)
-    - Surface area: Larger potholes affect more vehicles
+    Formula: severity = 0.7 * area_discrete + 0.3 * depth_discrete
     
-    Returns a score from 0.0 to 1.0
+    Both area and depth are first mapped to discrete values 1-10,
+    then combined with weights (area: 0.7, depth: 0.3).
+    
+    Returns a score from 1.0 to 10.0
     """
-    # Normalize depth (assume max dangerous depth is ~15cm)
-    depth_normalized = min(depth_cm / 15.0, 1.0)
+    area_discrete = map_area_to_discrete(surface_area_cm2)
+    depth_discrete = map_depth_to_discrete(depth_cm)
     
-    # Normalize surface area (assume max dangerous area is ~5000 cm²)
-    area_normalized = min(surface_area_cm2 / 5000.0, 1.0)
+    # Weighted combination: area weight: 0.7, depth weight: 0.3
+    severity_score = (0.7 * area_discrete) + (0.3 * depth_discrete)
     
-    # Weighted combination: depth is more critical than area
-    # depth weight: 0.7, area weight: 0.3
-    severity_score = (0.7 * depth_normalized) + (0.3 * area_normalized)
-    
-    return round(min(max(severity_score, 0.0), 1.0), 4)
+    return round(severity_score, 2)
 
 
 def get_severity_level(severity_score: float) -> str:
     """
-    Convert severity score to categorical level.
+    Convert severity score (1-10) to categorical level.
     
     Thresholds:
-    - LOW: 0.0 - 0.25
-    - MEDIUM: 0.25 - 0.50
-    - HIGH: 0.50 - 0.75
-    - CRITICAL: 0.75 - 1.0
+    - MINOR: 1.0 - 3.25
+    - MODERATE: 3.25 - 5.5
+    - HIGH: 5.5 - 7.75
+    - CRITICAL: 7.75 - 10.0
     """
-    if severity_score < 0.25:
-        return "LOW"
-    elif severity_score < 0.50:
-        return "MEDIUM"
-    elif severity_score < 0.75:
+    if severity_score < 3.25:
+        return "MINOR"
+    elif severity_score < 5.5:
+        return "MODERATE"
+    elif severity_score < 7.75:
         return "HIGH"
     else:
         return "CRITICAL"
@@ -216,8 +301,8 @@ def create_consumers():
     
     # Single consumer subscribing to multiple topics
     consumer = Consumer(consumer_conf)
-    consumer.subscribe([DEPTH_TOPIC, SURFACE_AREA_TOPIC])
-    print(f"[SUCCESS] Subscribed to {DEPTH_TOPIC} and {SURFACE_AREA_TOPIC}")
+    consumer.subscribe([DEPTH_TOPIC, RAW_EVENTS_TOPIC])
+    print(f"[SUCCESS] Subscribed to {DEPTH_TOPIC} and {RAW_EVENTS_TOPIC}")
     
     return consumer
 
@@ -241,13 +326,13 @@ def create_deserializers():
         lambda obj, ctx: obj,
     )
     
-    surface_area_deserializer = AvroDeserializer(
+    raw_event_deserializer = AvroDeserializer(
         schema_registry_client,
-        SURFACE_AREA_SCHEMA_STR,
+        RAW_EVENT_SCHEMA_STR,
         lambda obj, ctx: obj,
     )
     
-    return depth_deserializer, surface_area_deserializer
+    return depth_deserializer, raw_event_deserializer
 
 
 def create_serializer():
@@ -281,14 +366,14 @@ def main():
     # Setup Kafka
     consumer = create_consumers()
     producer = create_producer()
-    depth_deserializer, surface_area_deserializer = create_deserializers()
+    depth_deserializer, raw_event_deserializer = create_deserializers()
     severity_serializer = create_serializer()
     
     # Initialize aggregation store
     store = AggregationStore()
     last_cleanup = time.time()
     
-    print(f"\n[INFO] Consuming from: {DEPTH_TOPIC}, {SURFACE_AREA_TOPIC}")
+    print(f"\n[INFO] Consuming from: {DEPTH_TOPIC}, {RAW_EVENTS_TOPIC}")
     print(f"[INFO] Producing to: {OUTPUT_TOPIC}")
     print(f"[INFO] Aggregation timeout: {AGGREGATION_TIMEOUT_SECONDS}s")
     print(f"[INFO] Press Ctrl+C to stop.\n")
@@ -337,23 +422,22 @@ def main():
                         # Add to store and check if complete
                         combined_data = store.add_depth(event_id, depth_cm, confidence)
                 
-                elif topic == SURFACE_AREA_TOPIC:
-                    # Deserialize surface area estimate
-                    record = surface_area_deserializer(
+                elif topic == RAW_EVENTS_TOPIC:
+                    # Deserialize raw event to extract surface_area_cm2
+                    record = raw_event_deserializer(
                         msg.value(),
-                        SerializationContext(SURFACE_AREA_TOPIC, MessageField.VALUE)
+                        SerializationContext(RAW_EVENTS_TOPIC, MessageField.VALUE)
                     )
                     
                     if record:
                         event_id = record["event_id"]
                         surface_area_cm2 = record["surface_area_cm2"]
-                        confidence = record.get("confidence")
                         surface_count += 1
                         
-                        print(f"[SURFACE #{surface_count}] event_id={event_id}, area={surface_area_cm2}cm²")
+                        print(f"[SURFACE #{surface_count}] event_id={event_id}, area={surface_area_cm2}cm² (from raw event)")
                         
                         # Add to store and check if complete
-                        combined_data = store.add_surface_area(event_id, surface_area_cm2, confidence)
+                        combined_data = store.add_surface_area(event_id, surface_area_cm2, None)
                 
                 # If we have both estimates, calculate severity
                 if combined_data:

@@ -483,6 +483,22 @@ services:
     networks:
       - kafka-net
 
+  # # ==========================================================
+  # #  DASHBOARD (Next.js Frontend)
+  # # ==========================================================
+  # dashboard:
+  #   build:
+  #     context: ./dashboard
+  #     dockerfile: Dockerfile
+  #   container_name: dashboard
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - NODE_ENV=production
+  #   networks:
+  #     - kafka-net
+  #   restart: unless-stopped
+
 networks:
   kafka-net:
     name: kafka-net
