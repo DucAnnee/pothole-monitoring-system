@@ -49,13 +49,13 @@ decoded_output
 
 # edge testing video
 edge\inputs
-edge\assets
-edge\models
-edge\segmentation\results
-edge\surface_area\results
+edge/assets
+edge/models
+edge/segmentation/results
+edge/surface_area/results
 
 # python cache
 __pycache__/
 
 # Depth anything path
-cloud\Depth-Anything-V2\depth_anything_v2_vitl.pth
+cloud/Depth-Anything-V2/depth_anything_v2_vitl.pth
