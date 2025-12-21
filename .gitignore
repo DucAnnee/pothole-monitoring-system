@@ -56,3 +56,6 @@ edge\surface_area\results
 
 # python cache
 __pycache__/
+
+# Depth anything path
+cloud\Depth-Anything-V2\depth_anything_v2_vitl.pth
