@@ -183,8 +183,7 @@ class EdgePipeline:
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     print("\n[INFO] 'q' pressed, stopping inference...")
-                    self.running = False
-                    break
+                    self.stop()
 
             cap.release()
             cv2.destroyAllWindows()
