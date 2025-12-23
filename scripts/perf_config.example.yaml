@@ -1,0 +1,54 @@
+# Performance Test Configuration
+# Copy this file to perf_config.yaml and modify as needed
+
+# Kafka configuration
+kafka_bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
+kafka_topics:
+  - "pothole.raw.events.v1"
+  - "pothole.depth.v1"
+  - "pothole.severity.score.v1"
+kafka_consumer_groups:
+  - "depth-estimation-service"
+  - "severity-calculation-service"
+  - "etl-service"
+  - "final-enrichment-service-v2"
+
+# Trino/Iceberg configuration
+trino_host: "localhost"
+trino_port: 8081
+trino_user: "trino"
+trino_catalog: "iceberg"
+trino_schema: "city"
+
+# MinIO configuration
+minio_endpoint: "localhost:9000"
+minio_access_key: "minioadmin"
+minio_secret_key: "minioadmin"
+minio_bucket: "warehouse"
+minio_secure: false
+
+# Redis configuration
+redis_host: "localhost"
+redis_port: 6379
+
+# Test parameters
+test_duration_seconds: 60
+synthetic_event_count: 0
+query_iterations: 10
+
+# Performance targets for pass/fail evaluation
+targets:
+  # Kafka: minimum messages per second throughput
+  kafka_throughput_min: 10
+  # Kafka: maximum acceptable consumer lag (messages)
+  consumer_lag_max: 1000
+  # Trino: maximum average query latency (ms)
+  trino_avg_latency_max_ms: 5000
+  # Trino: maximum P95 query latency (ms)
+  trino_p95_latency_max_ms: 10000
+  # Redis: minimum cache hit rate (0-1)
+  redis_hit_rate_min: 0.5
+  # E2E: minimum data completeness ratio (0-1)
+  data_completeness_min: 0.95
+  # Docker: minimum container uptime ratio (0-1)
+  uptime_min: 0.99

@@ -28,14 +28,14 @@
 
 *(Intermediate ML output for pothole severity calculation)*
 
-| Column             | Data Type    | Description                                             |
-| ------------------ | ------------ | ------------------------------------------------------- |
-| `event_id`         | VARCHAR      | Reference to the associated raw event                   |
-| `depth_cm`         | DOUBLE       | Estimated pothole depth in centimeters                  |
-| `surface_area_cm2` | DOUBLE       | Estimated pothole surface area in square centimeters    |
-| `severity_score`   | DOUBLE       | Calculated severity score                               |
-| `severity_level`   | VARCHAR      | Severity category (`MINOR`, `MODERATE`, `HIGH`, `CRITICAL`) |
-| `calculated_at`    | TIMESTAMP(3) | Timestamp when severity was calculated                  |
+| Column             | Data Type    | Description                                                                |
+| ------------------ | ------------ | -------------------------------------------------------------------------- |
+| `event_id`         | VARCHAR      | Reference to the associated raw event                                      |
+| `depth_cm`         | DOUBLE       | Estimated pothole depth in centimeters                                     |
+| `surface_area_cm2` | DOUBLE       | Estimated pothole surface area in square centimeters                       |
+| `severity_score`   | INTEGER      | Calculated severity score (1-10). Formula: `clip[1,10](ceil(0.6*area + 0.4*depth))` |
+| `severity_level`   | VARCHAR      | Severity category (`MINOR`, `MODERATE`, `HIGH`, `CRITICAL`)                |
+| `calculated_at`    | TIMESTAMP(3) | Timestamp when severity was calculated                                     |
 
 ---
 
@@ -43,29 +43,31 @@
 
 *(Current authoritative state of each pothole)*
 
-| Column              | Data Type    | Description                                           |
-| ------------------- | ------------ | ----------------------------------------------------- |
-| `pothole_id`        | VARCHAR      | Unique identifier for the pothole                     |
-| `first_event_id`    | VARCHAR      | Event that first detected this pothole                |
-| `reported_at`       | TIMESTAMP(3) | Timestamp of first detection                          |
-| `gps_lat`           | DOUBLE       | Latitude of the pothole centroid                      |
-| `gps_lon`           | DOUBLE       | Longitude of the pothole centroid                     |
-| `geom_h3`           | BIGINT       | H3 index for spatial indexing                         |
-| `city`              | VARCHAR      | City name                                             |
-| `ward`              | VARCHAR      | Ward identifier                                       |
-| `district`          | VARCHAR      | District name                                         |
-| `street_name`       | VARCHAR      | Street name                                           |
-| `road_id`           | VARCHAR      | Road or OSM way identifier                            |
-| `depth_cm`          | DOUBLE       | Latest estimated depth in centimeters                 |
-| `surface_area_cm2`  | DOUBLE       | Latest estimated surface area                         |
-| `severity_score`    | DOUBLE       | Latest severity score                                 |
-| `severity_level`    | VARCHAR      | Latest severity level                                 |
-| `pothole_polygon`   | VARCHAR      | Latest GeoJSON polygon                                |
-| `status`            | VARCHAR      | Lifecycle status (`reported`, `in_progress`, `fixed`) |
-| `in_progress_at`    | TIMESTAMP(3) | Timestamp when repair work started                    |
-| `fixed_at`          | TIMESTAMP(3) | Timestamp when repair was completed                   |
-| `last_updated_at`   | TIMESTAMP(3) | Timestamp of last update (UPSERT time)                |
-| `observation_count` | INTEGER      | Number of observations associated with this pothole   |
+| Column              | Data Type    | Description                                                          |
+| ------------------- | ------------ | -------------------------------------------------------------------- |
+| `pothole_id`        | VARCHAR      | Unique identifier for the pothole                                    |
+| `first_event_id`    | VARCHAR      | Event that first detected this pothole                               |
+| `reported_at`       | TIMESTAMP(3) | Timestamp of first detection                                         |
+| `gps_lat`           | DOUBLE       | Latitude of the pothole centroid                                     |
+| `gps_lon`           | DOUBLE       | Longitude of the pothole centroid                                    |
+| `geom_h3`           | BIGINT       | H3 index for spatial indexing                                        |
+| `city`              | VARCHAR      | City name                                                            |
+| `ward`              | VARCHAR      | Ward identifier                                                      |
+| `district`          | VARCHAR      | District name                                                        |
+| `street_name`       | VARCHAR      | Street name                                                          |
+| `road_id`           | VARCHAR      | Road or OSM way identifier                                           |
+| `depth_cm`          | DOUBLE       | Latest estimated depth in centimeters                                |
+| `surface_area_cm2`  | DOUBLE       | Latest estimated surface area                                        |
+| `severity_score`    | DOUBLE       | Latest severity score                                                |
+| `severity_level`    | VARCHAR      | Latest severity level                                                |
+| `pothole_polygon`   | VARCHAR      | Latest GeoJSON polygon                                               |
+| `raw_image_path`    | VARCHAR      | S3 path to raw perspective image (from most recent detection)        |
+| `bev_image_path`    | VARCHAR      | S3 path to bird's-eye view image (from most recent detection)        |
+| `status`            | VARCHAR      | Lifecycle status (`reported`, `in_progress`, `fixed`)                |
+| `in_progress_at`    | TIMESTAMP(3) | Timestamp when repair work started                                   |
+| `fixed_at`          | TIMESTAMP(3) | Timestamp when repair was completed                                  |
+| `last_updated_at`   | TIMESTAMP(3) | Timestamp of last update (UPSERT time)                               |
+| `observation_count` | INTEGER      | Number of observations associated with this pothole                  |
 
 ---
 
@@ -232,4 +234,56 @@ WITH (
 **Why partition by `pothole_id`?**
 - Queries like "show me history of pothole XYZ" become fast
 - Trade-off: many small files if you have 10k potholes
+
+---
+
+## 4. Pipeline Latency Tracking (Redis)
+
+The system tracks end-to-end pipeline latency from edge detection to frontend availability using Redis as a real-time metrics store.
+
+### Latency Stages
+
+| Stage | Description | Timestamp Source |
+|-------|-------------|------------------|
+| `edge_to_kafka` | Time from edge detection to Kafka producer | `timestamp` field in raw event |
+| `kafka_to_storage` | Time from Kafka to Iceberg raw_events table | `ingested_at` - `kafka_produced_at` |
+| `depth_estimation` | Time from edge detection to severity calculation | `calculated_at` - `timestamp` |
+| `enrichment` | Time from severity calculation to potholes table | `pothole_stored_at` - `calculated_at` |
+| `total` | Total end-to-end pipeline latency | `pothole_stored_at` - `edge_detected_at` |
+
+### Redis Keys
+
+| Key Pattern | Type | Description |
+|-------------|------|-------------|
+| `latency:events:recent` | List | Recent latency events (FIFO, max 100) |
+| `latency:stats` | Hash | Summary statistics (last_updated, last_event_id) |
+| `latency:stage:{stage_name}` | Sorted Set | Per-stage latency values for percentile calculation |
+
+### Latency Event Schema (JSON)
+
+```json
+{
+  "event_id": "abc123-...",
+  "edge_detected_at": 1702982400000,
+  "kafka_produced_at": 1702982400100,
+  "raw_event_ingested_at": 1702982400500,
+  "severity_calculated_at": 1702982401000,
+  "pothole_stored_at": 1702982401500,
+  "edge_to_kafka_ms": 100,
+  "kafka_to_raw_storage_ms": 400,
+  "raw_to_severity_ms": 1000,
+  "severity_to_pothole_ms": 500,
+  "total_pipeline_ms": 1500
+}
+```
+
+### API Endpoint
+
+**GET /api/v1/latency**
+
+Returns:
+- `stages`: Per-stage latency stats (count, avg, min, max, p50, p95, p99)
+- `recent_events`: Last 20 latency events
+- `total_pipeline`: Aggregate pipeline latency metrics
+- `microservices`: Frontend-friendly service latency array
 

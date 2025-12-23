@@ -1,0 +1,54 @@
+# ============================================================================
+# SEVERITY CALCULATION SERVICE - CONFIGURATION
+# ============================================================================
+# Configuration for the Severity Score Aggregator that consumes depth estimates
+# and raw events (for surface area), calculates severity scores, and produces
+# to the severity score topic.
+
+# Kafka configuration
+kafka:
+  bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
+  schema_registry_url: "http://localhost:8082"
+  consumer_group_id: "severity-aggregator-group"
+  
+  # Input topics
+  depth_topic: "pothole.depth.v1"
+  raw_events_topic: "pothole.raw.events.v1"  # For surface_area_cm2
+  
+  # Output topic
+  output_topic: "pothole.severity.score.v1"
+  
+  max_retries: 5
+  retry_delay: 2
+
+# Aggregation settings
+# NOTE: Depth estimation may take longer to process than raw event arrival.
+# The timeout should be generous enough to wait for matching depth estimates.
+aggregation:
+  # Maximum time (in seconds) to wait for both depth AND surface area
+  # to arrive before timing out
+  timeout_seconds: ${AGGREGATION_TIMEOUT_SECONDS:600}  # 10 minutes default
+  
+  # How often to check for and clean up stale entries (in seconds)
+  cleanup_interval_seconds: ${CLEANUP_INTERVAL_SECONDS:30}
+
+# Severity calculation formula configuration
+severity:
+  # Formula: S = clip[min,max]( ceil(area_weight * area_score + depth_weight * depth_score) )
+  # where area_score and depth_score are discrete values 1-10
+  area_weight: 0.6
+  depth_weight: 0.4
+  min_score: 1
+  max_score: 10
+  
+  # Severity level thresholds (based on 1-10 scale)
+  thresholds:
+    minor_max: 3.25      # MINOR: 1.0 - 3.25
+    moderate_max: 5.5    # MODERATE: 3.25 - 5.5
+    high_max: 7.75       # HIGH: 5.5 - 7.75
+    # CRITICAL: 7.75 - 10.0
+
+# Logging configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_timeout_warnings: true

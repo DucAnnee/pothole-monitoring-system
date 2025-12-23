@@ -81,7 +81,7 @@
     {"name": "event_id", "type": "string"},
     {"name": "depth_cm", "type": "double"},
     {"name": "surface_area_cm2", "type": "double"},
-    {"name": "severity_score", "type": "double"},
+    {"name": "severity_score", "type": "int"},
     {"name": "severity_level", "type": {"type": "enum", "name": "SeverityLevel", "symbols": ["MINOR", "MODERATE", "HIGH", "CRITICAL"]}},
     {"name": "calculated_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
   ]
@@ -91,6 +91,7 @@
 **Notes:**
 - Added `severity_level` enum for easier filtering
 - Includes depth + surface_area so final enrichment service doesn't need to re-join
+- `severity_score` is an integer 1-10 calculated as: `clip[1,10](ceil(0.6*area + 0.4*depth))`
 
 ## 📊 Topic Configuration Summary
 

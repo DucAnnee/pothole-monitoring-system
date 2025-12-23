@@ -1,0 +1,41 @@
+# ============================================================================
+# ETL SERVICE - CONFIGURATION
+# ============================================================================
+# Configuration for the Kafka → Iceberg ETL Microservice that reads from
+# Kafka topics and writes to corresponding Iceberg tables.
+
+# Kafka configuration
+kafka:
+  bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
+  schema_registry_url: "http://localhost:8082"
+  consumer_group_id: "pothole-iceberg-etl"
+  
+  # Dead Letter Queue suffix
+  dlq_suffix: ".dlq"
+
+# Polaris/Iceberg configuration
+polaris:
+  url: "http://localhost:8181/api/catalog/"
+  credentials: "${POLARIS_CREDENTIALS:root:s3cr3t}"
+  warehouse: "warehouse"
+  catalog_name: "iceberg"
+  namespace: "city"
+
+# Trino configuration
+trino:
+  host: "localhost"
+  port: 8081
+  user: "trino"
+  catalog: "iceberg"
+
+# Batching configuration
+batching:
+  # Number of records to accumulate before writing to Iceberg
+  batch_size: ${BATCH_SIZE:100}
+  
+  # Maximum time to wait before flushing a partial batch (in seconds)
+  batch_timeout_seconds: ${BATCH_TIMEOUT_SECONDS:30}
+
+# Logging configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR

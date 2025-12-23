@@ -1,0 +1,61 @@
+# ============================================================================
+# FINAL ENRICHMENT SERVICE - CONFIGURATION
+# ============================================================================
+# Configuration for the Final Enrichment Service that aggregates raw events
+# with severity scores, deduplicates potholes using H3, and enriches with
+# OSM address data.
+
+# Kafka configuration
+kafka:
+  bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
+  schema_registry_url: "http://localhost:8082"
+  consumer_group_id: "final-enrichment-service-v2"
+  
+  # Input topics
+  raw_events_topic: "pothole.raw.events.v1"
+  severity_score_topic: "pothole.severity.score.v1"
+
+# Trino/Iceberg configuration
+trino:
+  host: "localhost"
+  port: 8081
+  user: "trino"
+  catalog: "iceberg"
+  schema: "city"
+
+# Redis configuration (for address caching)
+redis:
+  host: "localhost"
+  port: 6379
+
+# H3 spatial indexing configuration
+h3:
+  dedup_resolution: 12   # ~0.5m hexagons for pothole deduplication
+  cache_resolution: 10   # ~150m hexagons for address caching
+
+# Address caching settings
+cache:
+  key_prefix: "osm:h3:"
+  ttl_seconds: 2592000  # 30 days
+
+# OpenStreetMap API settings
+osm:
+  min_request_interval: 1.1  # seconds (1 req/sec max rate limit)
+
+# Aggregation settings
+# NOTE: Raw events arrive much sooner than severity events because depth
+# estimation takes longer to process. The timeout should be generous enough
+# to wait for matching severity events.
+aggregation:
+  # Maximum time (in seconds) to wait for both raw event AND severity score
+  # to arrive before timing out. Increase if depth estimation is slow.
+  timeout_seconds: ${AGGREGATION_TIMEOUT_SECONDS:300}  # 5 minutes default
+  
+  # How often to check for and clean up stale entries (in seconds)
+  cleanup_interval_seconds: ${CLEANUP_INTERVAL_SECONDS:30}
+
+# Logging configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  # Log warnings when events timeout waiting for their match
+  log_timeout_warnings: true
