@@ -33,7 +33,7 @@ export async function getPotholeById(req, res) {
       return res.json(cached);
     }
 
-    // Query pothole details
+    // Query pothole details (image paths now stored directly in potholes table)
     const query = `
       SELECT 
         pothole_id,
@@ -52,6 +52,8 @@ export async function getPotholeById(req, res) {
         severity_score,
         severity_level,
         pothole_polygon,
+        raw_image_path,
+        bev_image_path,
         status,
         in_progress_at,
         fixed_at,
@@ -95,6 +97,9 @@ export async function getPotholeById(req, res) {
       fixed_at: pothole.fixed_at,
       last_updated: pothole.last_updated_at,
       observation_count: pothole.observation_count,
+      // Image paths from raw_events table
+      raw_image_path: pothole.raw_image_path || null,
+      bev_image_path: pothole.bev_image_path || null,
     };
 
     // Cache the response

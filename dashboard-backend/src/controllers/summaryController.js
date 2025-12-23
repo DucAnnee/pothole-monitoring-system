@@ -2,7 +2,8 @@ import trino from '../db/trino.js';
 import redis from '../db/redis.js';
 import config from '../config/index.js';
 
-const CACHE_KEY = 'api:summary';
+const CACHE_KEY = 'api:summary:v2';
+const CACHE_TTL_SECONDS = 300; // 5 minutes
 
 /**
  * Get the start and end of a calendar week (Monday-Sunday) for a given date
@@ -40,184 +41,207 @@ function formatTrinoTimestamp(date) {
 }
 
 /**
+ * Fetch all pothole data needed for summary calculations in ONE query.
+ * This reduces 12+ round trips to Trino/MinIO down to just 1.
+ * @param {Date} thirtyDaysAgo - Cutoff for historical data
+ * @returns {Promise<Array>} - All pothole records needed for aggregation
+ */
+async function fetchAllPotholesForSummary(thirtyDaysAgo) {
+  const query = `
+    SELECT 
+      pothole_id,
+      status,
+      severity_score,
+      severity_level,
+      reported_at,
+      in_progress_at,
+      fixed_at
+    FROM iceberg.city.potholes
+    WHERE reported_at >= TIMESTAMP '${formatTrinoTimestamp(thirtyDaysAgo)}'
+       OR status IN ('reported', 'in_progress')
+  `;
+  
+  return await trino.query(query);
+}
+
+/**
+ * Calculate all summary metrics from in-memory data.
+ * Performs all aggregations in JavaScript instead of multiple SQL queries.
+ * @param {Array} potholes - All pothole records
+ * @param {Object} dateRanges - Pre-calculated date ranges
+ * @returns {Object} - All calculated summary metrics
+ */
+function calculateSummaryMetrics(potholes, dateRanges) {
+  const { 
+    now, todayStart, todayEnd, yesterdayStart, yesterdayEnd,
+    thisWeek, lastWeek 
+  } = dateRanges;
+
+  // Initialize counters
+  let activePotholesCount = 0;
+  let activeSeveritySum = 0;
+  let newToday = 0;
+  let newYesterday = 0;
+  let newThisWeek = 0;
+  let newLastWeek = 0;
+  let reportedToInProgressThisWeek = 0;
+  let reportedToInProgressLastWeek = 0;
+  let inProgressToFixedThisWeek = 0;
+  let inProgressToFixedLastWeek = 0;
+
+  const severityDistribution = {
+    MINOR: 0,
+    MODERATE: 0,
+    HIGH: 0,
+    CRITICAL: 0,
+  };
+
+  // Daily counts for last 30 days (map: dateStr -> count)
+  const dailyCounts = new Map();
+
+  // Process each pothole once
+  for (const p of potholes) {
+    const reportedAt = new Date(p.reported_at);
+    const inProgressAt = p.in_progress_at ? new Date(p.in_progress_at) : null;
+    const fixedAt = p.fixed_at ? new Date(p.fixed_at) : null;
+
+    // 1. Active potholes count & severity (status = 'reported')
+    if (p.status === 'reported') {
+      activePotholesCount++;
+      activeSeveritySum += parseFloat(p.severity_score) || 0;
+
+      // Severity distribution (active only)
+      if (p.severity_level in severityDistribution) {
+        severityDistribution[p.severity_level]++;
+      }
+
+      // Daily counts for active potholes in last 30 days
+      const dateStr = formatDate(reportedAt);
+      dailyCounts.set(dateStr, (dailyCounts.get(dateStr) || 0) + 1);
+    }
+
+    // 2. New potholes today
+    if (reportedAt >= todayStart && reportedAt <= todayEnd) {
+      newToday++;
+    }
+
+    // 3. New potholes yesterday
+    if (reportedAt >= yesterdayStart && reportedAt <= yesterdayEnd) {
+      newYesterday++;
+    }
+
+    // 4. New potholes this week
+    if (reportedAt >= thisWeek.start && reportedAt <= thisWeek.end) {
+      newThisWeek++;
+    }
+
+    // 5. New potholes last week
+    if (reportedAt >= lastWeek.start && reportedAt <= lastWeek.end) {
+      newLastWeek++;
+    }
+
+    // 6. Status changes: reported -> in_progress (this week)
+    if (p.status === 'in_progress' && inProgressAt) {
+      if (inProgressAt >= thisWeek.start && inProgressAt <= thisWeek.end) {
+        reportedToInProgressThisWeek++;
+      }
+      if (inProgressAt >= lastWeek.start && inProgressAt <= lastWeek.end) {
+        reportedToInProgressLastWeek++;
+      }
+    }
+
+    // 7. Status changes: in_progress -> fixed (this/last week)
+    if (p.status === 'fixed' && fixedAt) {
+      if (fixedAt >= thisWeek.start && fixedAt <= thisWeek.end) {
+        inProgressToFixedThisWeek++;
+      }
+      if (fixedAt >= lastWeek.start && fixedAt <= lastWeek.end) {
+        inProgressToFixedLastWeek++;
+      }
+    }
+  }
+
+  // Calculate average severity
+  const averageSeverity = activePotholesCount > 0 
+    ? (activeSeveritySum / activePotholesCount).toFixed(2)
+    : '0.00';
+
+  // Build last 30 days array with 0-filled gaps
+  const activePotholesLast30Days = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+    const dateStr = formatDate(d);
+    activePotholesLast30Days.push({
+      date: dateStr,
+      count: dailyCounts.get(dateStr) || 0,
+    });
+  }
+
+  return {
+    activePotholesCount,
+    averageSeverity: parseFloat(averageSeverity),
+    newToday,
+    newYesterday,
+    newThisWeek,
+    newLastWeek,
+    reportedToInProgressThisWeek,
+    reportedToInProgressLastWeek,
+    inProgressToFixedThisWeek,
+    inProgressToFixedLastWeek,
+    severityDistribution,
+    activePotholesLast30Days,
+  };
+}
+
+/**
  * GET /api/v1/summary
  * Returns dashboard summary metrics
+ * 
+ * OPTIMIZED: Single Trino query + in-memory aggregation + Redis caching (5 min TTL)
  */
 export async function getSummary(req, res) {
+  const startTime = Date.now();
+  
   try {
     // Check cache first
     const cached = await redis.get(CACHE_KEY);
     if (cached) {
+      console.log(`[Summary] Cache HIT - served in ${Date.now() - startTime}ms`);
       return res.json(cached);
     }
+    console.log('[Summary] Cache MISS - fetching from Trino...');
 
+    // Calculate all date ranges needed
     const now = new Date();
     const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
     const todayEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
     const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
     const yesterdayEnd = new Date(todayEnd.getTime() - 24 * 60 * 60 * 1000);
-
     const thisWeek = getWeekBounds(now);
     const lastWeek = {
       start: new Date(thisWeek.start.getTime() - 7 * 24 * 60 * 60 * 1000),
       end: new Date(thisWeek.end.getTime() - 7 * 24 * 60 * 60 * 1000),
     };
-
-    // 1. Active potholes count (status = 'reported')
-    const activeCountQuery = `
-      SELECT COUNT(*) as count
-      FROM iceberg.city.potholes
-      WHERE status = 'reported'
-    `;
-    const activeResult = await trino.query(activeCountQuery);
-    const activePotholesCount = parseInt(activeResult[0]?.count || 0);
-
-    // 2. New potholes today
-    const newTodayQuery = `
-      SELECT COUNT(*) as count
-      FROM iceberg.city.potholes
-      WHERE reported_at >= TIMESTAMP '${formatTrinoTimestamp(todayStart)}'
-        AND reported_at <= TIMESTAMP '${formatTrinoTimestamp(todayEnd)}'
-    `;
-    const newTodayResult = await trino.query(newTodayQuery);
-    const newToday = parseInt(newTodayResult[0]?.count || 0);
-
-    // 3. New potholes yesterday (for comparison)
-    const newYesterdayQuery = `
-      SELECT COUNT(*) as count
-      FROM iceberg.city.potholes
-      WHERE reported_at >= TIMESTAMP '${formatTrinoTimestamp(yesterdayStart)}'
-        AND reported_at <= TIMESTAMP '${formatTrinoTimestamp(yesterdayEnd)}'
-    `;
-    const newYesterdayResult = await trino.query(newYesterdayQuery);
-    const newYesterday = parseInt(newYesterdayResult[0]?.count || 0);
-
-    // 4. New potholes this week
-    const newThisWeekQuery = `
-      SELECT COUNT(*) as count
-      FROM iceberg.city.potholes
-      WHERE reported_at >= TIMESTAMP '${formatTrinoTimestamp(thisWeek.start)}'
-        AND reported_at <= TIMESTAMP '${formatTrinoTimestamp(thisWeek.end)}'
-    `;
-    const newThisWeekResult = await trino.query(newThisWeekQuery);
-    const newThisWeek = parseInt(newThisWeekResult[0]?.count || 0);
-
-    // 5. New potholes last week (for comparison)
-    const newLastWeekQuery = `
-      SELECT COUNT(*) as count
-      FROM iceberg.city.potholes
-      WHERE reported_at >= TIMESTAMP '${formatTrinoTimestamp(lastWeek.start)}'
-        AND reported_at <= TIMESTAMP '${formatTrinoTimestamp(lastWeek.end)}'
-    `;
-    const newLastWeekResult = await trino.query(newLastWeekQuery);
-    const newLastWeek = parseInt(newLastWeekResult[0]?.count || 0);
-
-    // 6. Average severity score of active potholes
-    const avgSeverityQuery = `
-      SELECT AVG(severity_score) as avg_severity
-      FROM iceberg.city.potholes
-      WHERE status = 'reported'
-    `;
-    const avgSeverityResult = await trino.query(avgSeverityQuery);
-    const averageSeverity = parseFloat(avgSeverityResult[0]?.avg_severity || 0).toFixed(2);
-
-    // 7. Active potholes last 30 days (daily counts)
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const activeLast30DaysQuery = `
-      SELECT 
-        CAST(reported_at AS DATE) as date,
-        COUNT(*) as count
-      FROM iceberg.city.potholes
-      WHERE reported_at >= TIMESTAMP '${formatTrinoTimestamp(thirtyDaysAgo)}'
-        AND status = 'reported'
-      GROUP BY CAST(reported_at AS DATE)
-      ORDER BY date ASC
-    `;
-    const activeLast30DaysResult = await trino.query(activeLast30DaysQuery);
-    
-    // Fill in missing days with 0
-    const activePotholesLast30Days = [];
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      const dateStr = formatDate(d);
-      const found = activeLast30DaysResult.find(r => formatDate(new Date(r.date)) === dateStr);
-      activePotholesLast30Days.push({
-        date: dateStr,
-        count: found ? parseInt(found.count) : 0,
-      });
-    }
 
-    // 8. Severity distribution (active potholes only)
-    const severityDistQuery = `
-      SELECT 
-        severity_level,
-        COUNT(*) as count
-      FROM iceberg.city.potholes
-      WHERE status = 'reported'
-      GROUP BY severity_level
-    `;
-    const severityDistResult = await trino.query(severityDistQuery);
-    const severityDistribution = {
-      MINOR: 0,
-      MODERATE: 0,
-      HIGH: 0,
-      CRITICAL: 0,
+    const dateRanges = {
+      now, todayStart, todayEnd, yesterdayStart, yesterdayEnd,
+      thisWeek, lastWeek,
     };
-    severityDistResult.forEach(row => {
-      if (row.severity_level in severityDistribution) {
-        severityDistribution[row.severity_level] = parseInt(row.count);
-      }
-    });
 
-    // 9. Status changes this week: reported -> in_progress
-    const reportedToInProgressThisWeekQuery = `
-      SELECT COUNT(*) as count
-      FROM iceberg.city.potholes
-      WHERE status = 'in_progress'
-        AND in_progress_at >= TIMESTAMP '${formatTrinoTimestamp(thisWeek.start)}'
-        AND in_progress_at <= TIMESTAMP '${formatTrinoTimestamp(thisWeek.end)}'
-    `;
-    const rtipThisWeekResult = await trino.query(reportedToInProgressThisWeekQuery);
-    const reportedToInProgressThisWeek = parseInt(rtipThisWeekResult[0]?.count || 0);
+    // SINGLE QUERY to fetch all data needed
+    const queryStartTime = Date.now();
+    const potholes = await fetchAllPotholesForSummary(thirtyDaysAgo);
+    console.log(`[Summary] Trino query returned ${potholes.length} rows in ${Date.now() - queryStartTime}ms`);
 
-    // 10. Status changes last week: reported -> in_progress
-    const reportedToInProgressLastWeekQuery = `
-      SELECT COUNT(*) as count
-      FROM iceberg.city.potholes
-      WHERE status = 'in_progress'
-        AND in_progress_at >= TIMESTAMP '${formatTrinoTimestamp(lastWeek.start)}'
-        AND in_progress_at <= TIMESTAMP '${formatTrinoTimestamp(lastWeek.end)}'
-    `;
-    const rtipLastWeekResult = await trino.query(reportedToInProgressLastWeekQuery);
-    const reportedToInProgressLastWeek = parseInt(rtipLastWeekResult[0]?.count || 0);
-
-    // 11. Status changes this week: in_progress -> fixed
-    const inProgressToFixedThisWeekQuery = `
-      SELECT COUNT(*) as count
-      FROM iceberg.city.potholes
-      WHERE status = 'fixed'
-        AND fixed_at >= TIMESTAMP '${formatTrinoTimestamp(thisWeek.start)}'
-        AND fixed_at <= TIMESTAMP '${formatTrinoTimestamp(thisWeek.end)}'
-    `;
-    const ipfThisWeekResult = await trino.query(inProgressToFixedThisWeekQuery);
-    const inProgressToFixedThisWeek = parseInt(ipfThisWeekResult[0]?.count || 0);
-
-    // 12. Status changes last week: in_progress -> fixed
-    const inProgressToFixedLastWeekQuery = `
-      SELECT COUNT(*) as count
-      FROM iceberg.city.potholes
-      WHERE status = 'fixed'
-        AND fixed_at >= TIMESTAMP '${formatTrinoTimestamp(lastWeek.start)}'
-        AND fixed_at <= TIMESTAMP '${formatTrinoTimestamp(lastWeek.end)}'
-    `;
-    const ipfLastWeekResult = await trino.query(inProgressToFixedLastWeekQuery);
-    const inProgressToFixedLastWeek = parseInt(ipfLastWeekResult[0]?.count || 0);
+    // Calculate all metrics in-memory
+    const metrics = calculateSummaryMetrics(potholes, dateRanges);
 
     // Build comparison strings
-    const todayComparison = newToday - newYesterday;
-    const weekComparison = newThisWeek - newLastWeek;
-    const rtipComparison = reportedToInProgressThisWeek - reportedToInProgressLastWeek;
-    const ipfComparison = inProgressToFixedThisWeek - inProgressToFixedLastWeek;
+    const todayComparison = metrics.newToday - metrics.newYesterday;
+    const weekComparison = metrics.newThisWeek - metrics.newLastWeek;
+    const rtipComparison = metrics.reportedToInProgressThisWeek - metrics.reportedToInProgressLastWeek;
+    const ipfComparison = metrics.inProgressToFixedThisWeek - metrics.inProgressToFixedLastWeek;
 
     const formatComparison = (diff, unit = 'vs') => {
       const sign = diff >= 0 ? '+' : '';
@@ -226,35 +250,36 @@ export async function getSummary(req, res) {
 
     const response = {
       activePotholes: {
-        count: activePotholesCount,
+        count: metrics.activePotholesCount,
         trend: {
           today: {
-            count: newToday,
+            count: metrics.newToday,
             comparison: `${formatComparison(todayComparison)} yesterday`,
           },
           thisWeek: {
-            count: newThisWeek,
+            count: metrics.newThisWeek,
             comparison: `${formatComparison(weekComparison)} last week`,
           },
         },
       },
-      averageSeverity: parseFloat(averageSeverity),
-      activePotholesLast30Days,
-      severityDistribution,
+      averageSeverity: metrics.averageSeverity,
+      activePotholesLast30Days: metrics.activePotholesLast30Days,
+      severityDistribution: metrics.severityDistribution,
       statusChanges: {
         reportedToInProgress: {
-          thisWeek: reportedToInProgressThisWeek,
+          thisWeek: metrics.reportedToInProgressThisWeek,
           comparison: `${formatComparison(rtipComparison)} last week`,
         },
         inProgressToFixed: {
-          thisWeek: inProgressToFixedThisWeek,
+          thisWeek: metrics.inProgressToFixedThisWeek,
           comparison: `${formatComparison(ipfComparison)} last week`,
         },
       },
     };
 
-    // Cache the response
-    await redis.set(CACHE_KEY, response, config.cacheTTL.summary);
+    // Cache the response with 5-minute TTL
+    await redis.set(CACHE_KEY, response, CACHE_TTL_SECONDS);
+    console.log(`[Summary] Response cached (TTL=${CACHE_TTL_SECONDS}s). Total time: ${Date.now() - startTime}ms`);
 
     return res.json(response);
   } catch (error) {

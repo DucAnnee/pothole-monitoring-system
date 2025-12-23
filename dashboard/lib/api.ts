@@ -90,6 +90,17 @@ export interface PotholeDetail {
   fixed_at: string | null;
   last_updated: string;
   observation_count: number;
+  /** S3 URI for the raw image (s3://bucket/path) */
+  raw_image_path: string | null;
+  /** S3 URI for the bird's-eye view image (s3://bucket/path) */
+  bev_image_path: string | null;
+}
+
+// Image presigned URL response
+export interface PresignedUrlResponse {
+  url: string;
+  expiresIn: number;
+  path: string;
 }
 
 /**
@@ -140,6 +151,22 @@ export async function getMapView(lat?: number, lon?: number): Promise<MapViewRes
  */
 export async function getPotholeDetail(potholeId: string): Promise<PotholeDetail> {
   return fetchAPI<PotholeDetail>(`/pothole/${encodeURIComponent(potholeId)}`);
+}
+
+/**
+ * Get presigned URL for accessing an image from MinIO
+ * @param s3Path S3 URI (s3://bucket/path or bucket/path)
+ */
+export async function getImagePresignedUrl(s3Path: string): Promise<PresignedUrlResponse> {
+  return fetchAPI<PresignedUrlResponse>(`/image/presigned?path=${encodeURIComponent(s3Path)}`);
+}
+
+/**
+ * Get direct image proxy URL (use when presigned URLs have CORS issues)
+ * @param s3Path S3 URI (s3://bucket/path or bucket/path)
+ */
+export function getImageProxyUrl(s3Path: string): string {
+  return `${API_BASE_URL}/image/proxy?path=${encodeURIComponent(s3Path)}`;
 }
 
 /**

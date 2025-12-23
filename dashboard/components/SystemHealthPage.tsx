@@ -1,6 +1,7 @@
 'use client';
 
-import { Box, Typography, Paper } from '@mui/material';
+import { Box, Typography, Paper, CircularProgress } from '@mui/material';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Server,
   Database,
@@ -17,10 +18,60 @@ import {
   Brain,
   Calculator,
   Globe,
+  Timer,
+  RefreshCw,
+  Zap,
 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 
-// Hardcoded realistic sample data
+// API configuration
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
+
+// Latency data types
+interface StageStats {
+  count: number;
+  avg_ms: number;
+  min_ms: number;
+  max_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+}
+
+interface LatencyEvent {
+  event_id: string;
+  edge_detected_at: number;
+  pothole_stored_at: number;
+  total_pipeline_ms: number;
+  raw_to_severity_ms: number;
+  severity_to_pothole_ms: number;
+}
+
+interface MicroserviceLatency {
+  name: string;
+  key: string;
+  latency_ms: number;
+  p95_ms?: number;
+  status: string;
+}
+
+interface LatencyData {
+  timestamp: string;
+  stages: Record<string, StageStats>;
+  recent_events: LatencyEvent[];
+  microservices: MicroserviceLatency[];
+  total_pipeline: {
+    avg_ms: number;
+    p50_ms: number;
+    p95_ms: number;
+    p99_ms: number;
+    min_ms: number;
+    max_ms: number;
+  };
+  error?: string;
+}
+
+// Hardcoded realistic sample data for infrastructure (not pipeline latency)
 const systemData = {
   kafka: {
     brokers: [
@@ -52,40 +103,6 @@ const systemData = {
       queriesPerMinute: 45,
     },
   },
-  microservices: [
-    {
-      name: 'Segmentation Model',
-      icon: Layers,
-      status: 'healthy',
-      uptime: '99.8%',
-      latency: '120ms',
-      lastCheck: '2025-12-19T14:32:52Z',
-    },
-    {
-      name: 'Depth Estimation Model',
-      icon: Brain,
-      status: 'healthy',
-      uptime: '99.5%',
-      latency: '185ms',
-      lastCheck: '2025-12-19T14:32:51Z',
-    },
-    {
-      name: 'Severity Calculation',
-      icon: Calculator,
-      status: 'degraded',
-      uptime: '97.2%',
-      latency: '340ms',
-      lastCheck: '2025-12-19T14:32:50Z',
-    },
-    {
-      name: 'Website Backend',
-      icon: Globe,
-      status: 'healthy',
-      uptime: '99.9%',
-      latency: '45ms',
-      lastCheck: '2025-12-19T14:32:53Z',
-    },
-  ],
 };
 
 // Status indicator component
@@ -412,7 +429,32 @@ function PolarisSection() {
 }
 
 // Microservices Section
-function MicroservicesSection() {
+function MicroservicesSection({ latencyData, loading }: { latencyData: LatencyData | null; loading: boolean }) {
+  // Map latency API data to display format with icons
+  const iconMap: Record<string, React.ComponentType<{ style?: React.CSSProperties }>> = {
+    edge_to_kafka: Zap,
+    kafka_to_storage: HardDrive,
+    depth_estimation: Brain,
+    enrichment: Calculator,
+  };
+
+  const services = latencyData?.microservices?.map((svc) => ({
+    ...svc,
+    icon: iconMap[svc.key] || Globe,
+    uptime: '99.9%', // Placeholder - would need additional monitoring
+    lastCheck: new Date().toISOString(),
+  })) || [];
+
+  // Fall back to defaults if no data
+  const displayServices = services.length > 0 ? services : [
+    { name: 'Edge to Kafka', key: 'edge_to_kafka', icon: Zap, status: 'unknown', latency_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
+    { name: 'Kafka to Storage', key: 'kafka_to_storage', icon: HardDrive, status: 'unknown', latency_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
+    { name: 'Depth Estimation', key: 'depth_estimation', icon: Brain, status: 'unknown', latency_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
+    { name: 'Final Enrichment', key: 'enrichment', icon: Calculator, status: 'unknown', latency_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
+  ];
+
+  const healthyCount = displayServices.filter((s) => s.status === 'healthy').length;
+
   return (
     <Paper
       elevation={0}
@@ -438,17 +480,19 @@ function MicroservicesSection() {
         >
           <Cpu style={{ width: 20, height: 20, color: '#16a34a' }} />
         </Box>
-        <Box>
-          <Typography sx={{ fontWeight: 600, color: 'grey.900' }}>Microservices</Typography>
+        <Box sx={{ flex: 1 }}>
+          <Typography sx={{ fontWeight: 600, color: 'grey.900' }}>Pipeline Microservices</Typography>
           <Typography sx={{ fontSize: '0.75rem', color: 'grey.500' }}>
-            {systemData.microservices.filter((s) => s.status === 'healthy').length}/{systemData.microservices.length} Healthy
+            {healthyCount}/{displayServices.length} Healthy • Real-time latency metrics
           </Typography>
         </Box>
+        {loading && <CircularProgress size={20} />}
       </Box>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-        {systemData.microservices.map((service, index) => {
+        {displayServices.map((service, index) => {
           const Icon = service.icon;
+          const statusColor = service.status === 'healthy' ? 'healthy' : service.status === 'degraded' ? 'degraded' : 'down';
           return (
             <Box
               key={index}
@@ -481,21 +525,27 @@ function MicroservicesSection() {
                     {service.name}
                   </Typography>
                 </Box>
-                <StatusBadge status={service.status as 'healthy' | 'degraded' | 'down'} />
+                <StatusBadge status={statusColor as 'healthy' | 'degraded' | 'down'} />
               </Box>
 
               <Box sx={{ display: 'flex', gap: 3 }}>
                 <Box>
-                  <Typography sx={{ fontSize: '0.65rem', color: 'grey.500', textTransform: 'uppercase' }}>Uptime</Typography>
-                  <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>{service.uptime}</Typography>
+                  <Typography sx={{ fontSize: '0.65rem', color: 'grey.500', textTransform: 'uppercase' }}>Avg Latency</Typography>
+                  <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+                    {service.latency_ms > 0 ? `${Math.round(service.latency_ms)}ms` : '-'}
+                  </Typography>
                 </Box>
                 <Box>
-                  <Typography sx={{ fontSize: '0.65rem', color: 'grey.500', textTransform: 'uppercase' }}>Latency</Typography>
-                  <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>{service.latency}</Typography>
+                  <Typography sx={{ fontSize: '0.65rem', color: 'grey.500', textTransform: 'uppercase' }}>P95</Typography>
+                  <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+                    {service.p95_ms && service.p95_ms > 0 ? `${Math.round(service.p95_ms)}ms` : '-'}
+                  </Typography>
                 </Box>
                 <Box>
-                  <Typography sx={{ fontSize: '0.65rem', color: 'grey.500', textTransform: 'uppercase' }}>Last Check</Typography>
-                  <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>{formatTime(service.lastCheck)}</Typography>
+                  <Typography sx={{ fontSize: '0.65rem', color: 'grey.500', textTransform: 'uppercase' }}>Status</Typography>
+                  <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: service.status === 'healthy' ? '#16a34a' : '#ca8a04' }}>
+                    {service.status === 'healthy' ? 'Active' : service.status === 'unknown' ? 'No Data' : 'Degraded'}
+                  </Typography>
                 </Box>
               </Box>
             </Box>
@@ -506,12 +556,206 @@ function MicroservicesSection() {
   );
 }
 
+// Pipeline Latency Overview Section
+function PipelineLatencySection({ latencyData, loading, onRefresh }: { latencyData: LatencyData | null; loading: boolean; onRefresh: () => void }) {
+  const totalPipeline = latencyData?.total_pipeline;
+  const recentEvents = latencyData?.recent_events || [];
+  const hasData = totalPipeline && totalPipeline.avg_ms > 0;
+
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        p: 3,
+        border: '1px solid',
+        borderColor: 'grey.200',
+        borderRadius: 2,
+        height: '100%',
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Box
+            sx={{
+              width: 40,
+              height: 40,
+              bgcolor: '#eff6ff',
+              borderRadius: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Timer style={{ width: 20, height: 20, color: '#2563eb' }} />
+          </Box>
+          <Box>
+            <Typography sx={{ fontWeight: 600, color: 'grey.900' }}>End-to-End Pipeline Latency</Typography>
+            <Typography sx={{ fontSize: '0.75rem', color: 'grey.500' }}>
+              Edge Detection → MinIO Storage → Dashboard
+            </Typography>
+          </Box>
+        </Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {loading && <CircularProgress size={16} />}
+          <Box
+            component="button"
+            onClick={onRefresh}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.5,
+              px: 1.5,
+              py: 0.75,
+              bgcolor: 'grey.100',
+              border: 'none',
+              borderRadius: 1,
+              cursor: 'pointer',
+              fontSize: '0.75rem',
+              color: 'grey.700',
+              '&:hover': { bgcolor: 'grey.200' },
+            }}
+          >
+            <RefreshCw style={{ width: 14, height: 14 }} />
+            Refresh
+          </Box>
+        </Box>
+      </Box>
+
+      {!hasData ? (
+        <Box sx={{ textAlign: 'center', py: 4 }}>
+          <Typography sx={{ color: 'grey.500', fontSize: '0.875rem' }}>
+            No latency data available yet. Process some events to see metrics.
+          </Typography>
+        </Box>
+      ) : (
+        <>
+          {/* Main Latency Stats */}
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 2, mb: 3 }}>
+            <Box sx={{ textAlign: 'center', p: 2, bgcolor: '#eff6ff', borderRadius: 1.5 }}>
+              <Typography sx={{ fontSize: '1.75rem', fontWeight: 700, color: '#2563eb' }}>
+                {Math.round(totalPipeline.avg_ms)}
+              </Typography>
+              <Typography sx={{ fontSize: '0.7rem', color: '#3b82f6', fontWeight: 500 }}>Avg (ms)</Typography>
+            </Box>
+            <Box sx={{ textAlign: 'center', p: 2, bgcolor: '#f0fdf4', borderRadius: 1.5 }}>
+              <Typography sx={{ fontSize: '1.75rem', fontWeight: 700, color: '#16a34a' }}>
+                {Math.round(totalPipeline.p50_ms)}
+              </Typography>
+              <Typography sx={{ fontSize: '0.7rem', color: '#22c55e', fontWeight: 500 }}>P50 (ms)</Typography>
+            </Box>
+            <Box sx={{ textAlign: 'center', p: 2, bgcolor: '#fefce8', borderRadius: 1.5 }}>
+              <Typography sx={{ fontSize: '1.75rem', fontWeight: 700, color: '#ca8a04' }}>
+                {Math.round(totalPipeline.p95_ms)}
+              </Typography>
+              <Typography sx={{ fontSize: '0.7rem', color: '#eab308', fontWeight: 500 }}>P95 (ms)</Typography>
+            </Box>
+            <Box sx={{ textAlign: 'center', p: 2, bgcolor: '#fef2f2', borderRadius: 1.5 }}>
+              <Typography sx={{ fontSize: '1.75rem', fontWeight: 700, color: '#dc2626' }}>
+                {Math.round(totalPipeline.p99_ms)}
+              </Typography>
+              <Typography sx={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 500 }}>P99 (ms)</Typography>
+            </Box>
+          </Box>
+
+          {/* Min/Max Range */}
+          <Box sx={{ mb: 3 }}>
+            <Typography sx={{ fontSize: '0.75rem', fontWeight: 600, color: 'grey.500', mb: 1, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Latency Range
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Typography sx={{ fontSize: '0.875rem', color: 'grey.600' }}>
+                <strong>{Math.round(totalPipeline.min_ms)}ms</strong> (min)
+              </Typography>
+              <Box sx={{ flex: 1, height: 8, bgcolor: 'grey.100', borderRadius: 1, position: 'relative' }}>
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    left: `${Math.min((totalPipeline.avg_ms / totalPipeline.max_ms) * 100, 100)}%`,
+                    top: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    width: 12,
+                    height: 12,
+                    bgcolor: '#2563eb',
+                    borderRadius: '50%',
+                    border: '2px solid white',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                  }}
+                />
+              </Box>
+              <Typography sx={{ fontSize: '0.875rem', color: 'grey.600' }}>
+                <strong>{Math.round(totalPipeline.max_ms)}ms</strong> (max)
+              </Typography>
+            </Box>
+          </Box>
+
+          {/* Recent Events */}
+          {recentEvents.length > 0 && (
+            <>
+              <Typography sx={{ fontSize: '0.75rem', fontWeight: 600, color: 'grey.500', mb: 1.5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Recent Events ({recentEvents.length})
+              </Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 120, overflowY: 'auto' }}>
+                {recentEvents.slice(0, 5).map((event, index) => (
+                  <Box
+                    key={index}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      p: 1,
+                      bgcolor: 'grey.50',
+                      borderRadius: 1,
+                      fontSize: '0.8rem',
+                    }}
+                  >
+                    <Typography sx={{ fontFamily: 'monospace', color: 'grey.600', fontSize: '0.75rem' }}>
+                      {event.event_id?.substring(0, 12)}...
+                    </Typography>
+                    <Typography sx={{ fontWeight: 600, color: event.total_pipeline_ms > 5000 ? '#dc2626' : '#16a34a' }}>
+                      {event.total_pipeline_ms}ms
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            </>
+          )}
+        </>
+      )}
+    </Paper>
+  );
+}
+
 interface SystemHealthPageProps {
   onNavigateToOverview: () => void;
 }
 
 export function SystemHealthPage({ onNavigateToOverview }: SystemHealthPageProps) {
   const { logout } = useAuth();
+  const [latencyData, setLatencyData] = useState<LatencyData | null>(null);
+  const [latencyLoading, setLatencyLoading] = useState(false);
+
+  // Fetch latency data
+  const fetchLatencyData = useCallback(async () => {
+    setLatencyLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/latency`);
+      if (response.ok) {
+        const data = await response.json();
+        setLatencyData(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch latency data:', error);
+    } finally {
+      setLatencyLoading(false);
+    }
+  }, []);
+
+  // Fetch on mount and periodically
+  useEffect(() => {
+    fetchLatencyData();
+    const interval = setInterval(fetchLatencyData, 30000); // Refresh every 30 seconds
+    return () => clearInterval(interval);
+  }, [fetchLatencyData]);
 
   return (
     <Box
@@ -623,19 +867,27 @@ export function SystemHealthPage({ onNavigateToOverview }: SystemHealthPageProps
           p: 3,
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
-          gridTemplateRows: '1fr 1fr',
+          gridTemplateRows: 'auto auto 1fr',
           gap: 2.5,
           minHeight: 0,
           overflow: 'auto',
         }}
       >
+        {/* Row 1: Pipeline Latency (full width) */}
+        <Box sx={{ gridColumn: 'span 2' }}>
+          <PipelineLatencySection latencyData={latencyData} loading={latencyLoading} onRefresh={fetchLatencyData} />
+        </Box>
+        
+        {/* Row 2: Kafka and Storage */}
         <KafkaSection />
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
           <MinIOSection />
           <PolarisSection />
         </Box>
+        
+        {/* Row 3: Microservices (full width) */}
         <Box sx={{ gridColumn: 'span 2' }}>
-          <MicroservicesSection />
+          <MicroservicesSection latencyData={latencyData} loading={latencyLoading} />
         </Box>
       </Box>
     </Box>

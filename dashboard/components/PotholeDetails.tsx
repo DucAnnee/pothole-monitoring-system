@@ -1,15 +1,18 @@
-import { X, MapPin, AlertCircle, Calendar, Activity, Ruler } from 'lucide-react';
+import { X, MapPin, AlertCircle, Calendar, Activity, Ruler, Image as ImageIcon, ImageOff, ChevronLeft, ChevronRight, ZoomIn } from 'lucide-react';
 import {
   Box,
   Card,
   CardContent,
   Chip,
+  CircularProgress,
   Divider,
   IconButton,
+  Modal,
   Typography,
 } from '@mui/material';
+import { useCallback, useEffect, useState } from 'react';
 import type { PotholeDetail, SeverityLevel } from '@/lib/api';
-import { SEVERITY_COLORS } from '@/lib/api';
+import { SEVERITY_COLORS, getImageProxyUrl } from '@/lib/api';
 
 interface PotholeDetailsPanelProps {
   pothole: PotholeDetail;
@@ -31,8 +34,399 @@ function buildAddressString(pothole: PotholeDetail): string | null {
   return parts.length > 0 ? parts.join(', ') : null;
 }
 
+/**
+ * Fullscreen image lightbox modal
+ */
+interface ImageLightboxProps {
+  open: boolean;
+  onClose: () => void;
+  images: Array<{ title: string; url: string | null }>;
+  initialIndex: number;
+}
+
+function ImageLightbox({ open, onClose, images, initialIndex }: ImageLightboxProps) {
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
+
+  // Reset state when modal opens with new index
+  useEffect(() => {
+    if (open) {
+      setCurrentIndex(initialIndex);
+      setIsLoading(true);
+      setHasError(false);
+    }
+  }, [open, initialIndex]);
+
+  // Handle keyboard navigation
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (!open) return;
+    
+    switch (e.key) {
+      case 'Escape':
+        onClose();
+        break;
+      case 'ArrowLeft':
+        if (currentIndex > 0) {
+          setCurrentIndex(currentIndex - 1);
+          setIsLoading(true);
+          setHasError(false);
+        }
+        break;
+      case 'ArrowRight':
+        if (currentIndex < images.length - 1) {
+          setCurrentIndex(currentIndex + 1);
+          setIsLoading(true);
+          setHasError(false);
+        }
+        break;
+    }
+  }, [open, onClose, currentIndex, images.length]);
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
+
+  const currentImage = images[currentIndex];
+  const canGoPrev = currentIndex > 0;
+  const canGoNext = currentIndex < images.length - 1;
+
+  const handlePrev = () => {
+    if (canGoPrev) {
+      setCurrentIndex(currentIndex - 1);
+      setIsLoading(true);
+      setHasError(false);
+    }
+  };
+
+  const handleNext = () => {
+    if (canGoNext) {
+      setCurrentIndex(currentIndex + 1);
+      setIsLoading(true);
+      setHasError(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Box
+        sx={{
+          position: 'relative',
+          width: '90vw',
+          height: '90vh',
+          maxWidth: 1200,
+          bgcolor: 'rgba(0, 0, 0, 0.95)',
+          borderRadius: 2,
+          outline: 'none',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            p: 2,
+            borderBottom: '1px solid rgba(255,255,255,0.1)',
+          }}
+        >
+          <Typography sx={{ color: 'white', fontWeight: 500 }}>
+            {currentImage?.title}
+          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography sx={{ color: 'grey.500', fontSize: '0.875rem' }}>
+              {currentIndex + 1} / {images.length}
+            </Typography>
+            <IconButton onClick={onClose} sx={{ color: 'white' }}>
+              <X style={{ width: 24, height: 24 }} />
+            </IconButton>
+          </Box>
+        </Box>
+
+        {/* Image container */}
+        <Box
+          sx={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            p: 2,
+          }}
+        >
+          {/* Previous button */}
+          {images.length > 1 && (
+            <IconButton
+              onClick={handlePrev}
+              disabled={!canGoPrev}
+              sx={{
+                position: 'absolute',
+                left: 16,
+                color: 'white',
+                bgcolor: 'rgba(0,0,0,0.5)',
+                '&:hover': { bgcolor: 'rgba(0,0,0,0.7)' },
+                '&:disabled': { opacity: 0.3 },
+              }}
+            >
+              <ChevronLeft style={{ width: 32, height: 32 }} />
+            </IconButton>
+          )}
+
+          {/* Loading state */}
+          {isLoading && currentImage?.url && (
+            <Box
+              sx={{
+                position: 'absolute',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <CircularProgress sx={{ color: 'white' }} />
+            </Box>
+          )}
+
+          {/* Error state */}
+          {(hasError || !currentImage?.url) && !isLoading && (
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 2,
+              }}
+            >
+              <ImageOff style={{ width: 64, height: 64, color: '#6b7280' }} />
+              <Typography sx={{ color: 'grey.500' }}>
+                {currentImage?.url ? 'Failed to load image' : 'No image available'}
+              </Typography>
+            </Box>
+          )}
+
+          {/* Image */}
+          {currentImage?.url && (
+            <img
+              src={currentImage.url}
+              alt={currentImage.title}
+              onLoad={() => {
+                setIsLoading(false);
+                setHasError(false);
+              }}
+              onError={() => {
+                setIsLoading(false);
+                setHasError(true);
+              }}
+              style={{
+                maxWidth: '100%',
+                maxHeight: '100%',
+                objectFit: 'contain',
+                display: isLoading || hasError ? 'none' : 'block',
+              }}
+            />
+          )}
+
+          {/* Next button */}
+          {images.length > 1 && (
+            <IconButton
+              onClick={handleNext}
+              disabled={!canGoNext}
+              sx={{
+                position: 'absolute',
+                right: 16,
+                color: 'white',
+                bgcolor: 'rgba(0,0,0,0.5)',
+                '&:hover': { bgcolor: 'rgba(0,0,0,0.7)' },
+                '&:disabled': { opacity: 0.3 },
+              }}
+            >
+              <ChevronRight style={{ width: 32, height: 32 }} />
+            </IconButton>
+          )}
+        </Box>
+
+        {/* Footer hint */}
+        <Box sx={{ p: 1.5, textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+          <Typography sx={{ color: 'grey.600', fontSize: '0.75rem' }}>
+            Press ESC to close • Use arrow keys to navigate
+          </Typography>
+        </Box>
+      </Box>
+    </Modal>
+  );
+}
+
+/**
+ * Image card component with loading and error states
+ */
+interface ImageCardProps {
+  title: string;
+  s3Path: string | null;
+  onClick?: () => void;
+}
+
+function ImageCard({ title, s3Path, onClick }: ImageCardProps) {
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (s3Path) {
+      // Use proxy URL directly for simplicity and to avoid CORS issues
+      const proxyUrl = getImageProxyUrl(s3Path);
+      setImageUrl(proxyUrl);
+      setIsLoading(false);
+    } else {
+      setIsLoading(false);
+      setHasError(true);
+    }
+  }, [s3Path]);
+
+  const handleImageLoad = () => {
+    setIsLoading(false);
+    setHasError(false);
+  };
+
+  const handleImageError = () => {
+    setIsLoading(false);
+    setHasError(true);
+  };
+
+  const isClickable = onClick && !hasError && imageUrl;
+
+  return (
+    <Box
+      onClick={isClickable ? onClick : undefined}
+      sx={{
+        position: 'relative',
+        width: '100%',
+        aspectRatio: '4/3',
+        bgcolor: 'grey.100',
+        borderRadius: 2,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        cursor: isClickable ? 'pointer' : 'default',
+        transition: 'transform 0.2s, box-shadow 0.2s',
+        '&:hover': isClickable ? {
+          transform: 'scale(1.02)',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        } : {},
+      }}
+    >
+      {/* Title overlay */}
+      <Box
+        sx={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bgcolor: 'rgba(0,0,0,0.6)',
+          color: 'white',
+          px: 1.5,
+          py: 0.5,
+          zIndex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <Typography sx={{ fontSize: '0.75rem', fontWeight: 500 }}>{title}</Typography>
+        {isClickable && (
+          <ZoomIn style={{ width: 14, height: 14, opacity: 0.8 }} />
+        )}
+      </Box>
+
+      {/* Loading state */}
+      {isLoading && (
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            bgcolor: 'grey.100',
+          }}
+        >
+          <CircularProgress size={32} />
+        </Box>
+      )}
+
+      {/* Error state */}
+      {hasError && !isLoading && (
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            bgcolor: 'grey.100',
+            gap: 1,
+          }}
+        >
+          <ImageOff style={{ width: 32, height: 32, color: '#9ca3af' }} />
+          <Typography sx={{ color: 'grey.500', fontSize: '0.75rem' }}>
+            {s3Path ? 'Failed to load image' : 'No image available'}
+          </Typography>
+        </Box>
+      )}
+
+      {/* Image */}
+      {imageUrl && !hasError && (
+        <img
+          src={imageUrl}
+          alt={title}
+          onLoad={handleImageLoad}
+          onError={handleImageError}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+            display: isLoading ? 'none' : 'block',
+          }}
+        />
+      )}
+    </Box>
+  );
+}
+
 export function PotholeDetailsPanel({ pothole, onClose }: PotholeDetailsPanelProps) {
   const colors = SEVERITY_COLORS[pothole.severity_level] || SEVERITY_COLORS.MINOR;
+  
+  // Lightbox state
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxInitialIndex, setLightboxInitialIndex] = useState(0);
+  
+  // Prepare images for lightbox
+  const lightboxImages = [
+    { 
+      title: 'Raw Image', 
+      url: pothole.raw_image_path ? getImageProxyUrl(pothole.raw_image_path) : null 
+    },
+    { 
+      title: "Bird's Eye View", 
+      url: pothole.bev_image_path ? getImageProxyUrl(pothole.bev_image_path) : null 
+    },
+  ];
+
+  const handleImageClick = (index: number) => {
+    setLightboxInitialIndex(index);
+    setLightboxOpen(true);
+  };
   
   const getStatusStyles = (status: string) => {
     switch (status) {
@@ -102,7 +496,7 @@ export function PotholeDetailsPanel({ pothole, onClose }: PotholeDetailsPanelPro
                 }}
               >
                 <Typography sx={{ color: 'white', fontWeight: 600, fontSize: '0.875rem' }}>
-                  {pothole.severity_score != null ? pothole.severity_score.toFixed(1) : 'N/A'}
+                  {pothole.severity_score != null ? pothole.severity_score : 'N/A'}
                 </Typography>
               </Box>
               <Chip
@@ -204,7 +598,7 @@ export function PotholeDetailsPanel({ pothole, onClose }: PotholeDetailsPanelPro
       </Card>
 
       {/* Timeline Card */}
-      <Card sx={{ p: 2 }}>
+      <Card sx={{ p: 2, mb: 3 }}>
         <CardContent sx={{ p: '0 !important' }}>
           <Typography variant="h3" component="h3" sx={{ mb: 2 }}>Timeline</Typography>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
@@ -235,6 +629,39 @@ export function PotholeDetailsPanel({ pothole, onClose }: PotholeDetailsPanelPro
           </Box>
         </CardContent>
       </Card>
+
+      {/* Pothole Images Card - at the bottom */}
+      <Card sx={{ p: 2 }}>
+        <CardContent sx={{ p: '0 !important' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+            <ImageIcon style={{ width: 20, height: 20, color: '#6b7280' }} />
+            <Typography variant="h3" component="h3">Pothole Images</Typography>
+            <Typography sx={{ color: 'grey.400', fontSize: '0.75rem', ml: 'auto' }}>
+              Click to expand
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2 }}>
+            <ImageCard 
+              title="Raw Image" 
+              s3Path={pothole.raw_image_path} 
+              onClick={() => handleImageClick(0)}
+            />
+            <ImageCard 
+              title="Bird's Eye View" 
+              s3Path={pothole.bev_image_path} 
+              onClick={() => handleImageClick(1)}
+            />
+          </Box>
+        </CardContent>
+      </Card>
+
+      {/* Image Lightbox Modal */}
+      <ImageLightbox
+        open={lightboxOpen}
+        onClose={() => setLightboxOpen(false)}
+        images={lightboxImages}
+        initialIndex={lightboxInitialIndex}
+      />
     </Box>
   );
 }
