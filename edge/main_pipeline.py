@@ -1,6 +1,7 @@
 import argparse
 from segmentation import (
     PotholeSegmentationYOLO,
+    PotholeSegmentationRFDETR,
 )
 from surface_area import PotholeAreaEstimator
 from config_loader import load_config
@@ -46,14 +47,12 @@ def main():
             frame_interval=config.get_frame_interval(),
         )
     elif model_type == "rfdetr":
-        raise NotImplementedError("RFDETR model is not implemented yet.")
-        # segmenter = PotholeSegmentationRFDETR(
-        #     model_path=config.get_model_path(),
-        #     trapezoid_coords=config.get_trapezoid_coords(),
-        #     reference_resolution=config.get_reference_resolution(),
-        #     confidence_threshold=config.get_confidence_threshold(),
-        #     frame_interval=config.get_frame_interval(),
-        # )
+        segmenter = PotholeSegmentationRFDETR(
+            model_path=config.get_model_path(),
+            trapezoid_coords=config.get_trapezoid_coords(),
+            confidence_threshold=config.get_confidence_threshold(),
+            frame_interval=config.get_frame_interval(),
+        )
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 

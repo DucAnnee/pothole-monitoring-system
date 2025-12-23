@@ -13,7 +13,7 @@ from uuid import uuid4
 from datetime import datetime
 
 from config_loader import load_config
-from segmentation import PotholeSegmentationYOLO
+from segmentation import PotholeSegmentationYOLO, PotholeSegmentationRFDETR
 from processing_uploader import ProcessingUploader
 from data_models import DetectionData, DetectionMask
 
@@ -61,7 +61,12 @@ class EdgePipeline:
                 frame_interval=self.config.get_frame_interval(),
             )
         elif model_type == "rfdetr":
-            raise NotImplementedError("RF-DETR Model is not implemented")
+            return PotholeSegmentationRFDETR(
+                model_path=self.config.get_model_path(),
+                trapezoid_coords=self.config.get_trapezoid_coords(),
+                confidence_threshold=self.config.get_confidence_threshold(),
+                frame_interval=self.config.get_frame_interval(),
+            )
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -114,12 +119,9 @@ class EdgePipeline:
                 # Run inference
                 display_frame = frame.copy()
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                masked_image = self.segmenter.create_masked_image(frame_rgb)
-                results = self.segmenter.model.predict(
-                    masked_image,
-                    conf=self.confidence_threshold,
-                    verbose=False,
-                )
+                
+                # Use unified segment_potholes method (works for both YOLO and RF-DETR)
+                pothole_masks = self.segmenter.segment_potholes(frame_rgb)
 
                 # Denormalize trapezoid for display
                 w, h = frame.shape[1], frame.shape[0]
@@ -136,28 +138,20 @@ class EdgePipeline:
                     2,
                 )
 
-                # Extract masks
+                # Extract masks - filter for those in trapezoid
                 masks = []
-                for result in results:
-                    if result.masks is not None and result.boxes is not None:
-                        mask_coords = result.masks.xy
-                        confidences = result.boxes.conf
-
-                        for idx, mask_data in enumerate(mask_coords):
-                            if self.segmenter.pothole_in_trapezoid(
-                                mask_data, frame.shape
-                            ):
-                                # Draw pothole on display frame
-                                cv2.fillPoly(
-                                    display_frame,
-                                    [mask_data.astype(np.int32)],
-                                    (255, 0, 0),
-                                )
-                                conf = float(confidences[idx])
-                                coordinates = mask_data.tolist()
-                                masks.append(
-                                    DetectionMask(conf=conf, coordinates=coordinates)
-                                )
+                for mask_data, confidence in pothole_masks:
+                    if self.segmenter.pothole_in_trapezoid(mask_data, frame.shape):
+                        # Draw pothole on display frame
+                        cv2.fillPoly(
+                            display_frame,
+                            [mask_data.astype(np.int32)],
+                            (255, 0, 0),
+                        )
+                        coordinates = mask_data.tolist()
+                        masks.append(
+                            DetectionMask(conf=float(confidence), coordinates=coordinates)
+                        )
 
                 # Only queue if potholes detected
                 if masks:
