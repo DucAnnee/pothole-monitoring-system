@@ -317,7 +317,7 @@ def main():
             s3_path = upload_image_to_minio(minio_client, image_bytes, event_id)
             if s3_path is None:
                 print("[WARN] Skipping Kafka publish due to MinIO failure.")
-                time.sleep(10)
+                time.sleep(1)
                 continue
             
             # Generate pothole masks and compute surface area at edge
@@ -363,7 +363,7 @@ def main():
             producer.flush()
 
             print(f"[INFO] Waiting 10 seconds for next event...")
-            time.sleep(10)
+            time.sleep(1)
 
     except KeyboardInterrupt:
         print("\n\n[INFO] Stopped by user.")
