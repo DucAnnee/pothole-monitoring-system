@@ -1,9 +1,41 @@
+from abc import ABC
 import cv2
 import numpy as np
 import os
 import json
 from datetime import datetime
 from ultralytics import YOLO
+
+
+class PotholeSegmentation(ABC):
+    def __init__(
+        self,
+        model_path,
+        trapezoid_coords,
+        confidence_threshold=0.25,
+        frame_interval=30,
+    ):
+        self.model_path = model_path
+        self.confidence_threshold = confidence_threshold
+        self.frame_interval = frame_interval
+
+    def load_model(self):
+        """
+        Load the corresponding model of the class
+        """
+        return NotImplementedError("Class has to implement the load_model() method")
+
+    def segment(self, frame_rgb: np.ndarray):
+        """
+        Segment the input RGB frame
+
+        Args:
+        - frame_rgb (np.ndarray)
+
+        Return:
+        - List of tuples of segmentation masks and confidences
+        """
+        return NotImplementedError("Class has to implement the segment() method")
 
 
 class PotholeSegmentationYOLO:

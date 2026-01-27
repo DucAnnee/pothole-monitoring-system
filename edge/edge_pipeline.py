@@ -119,7 +119,7 @@ class EdgePipeline:
                 # Run inference
                 display_frame = frame.copy()
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
+
                 # Use unified segment_potholes method (works for both YOLO and RF-DETR)
                 pothole_masks = self.segmenter.segment_potholes(frame_rgb)
 
@@ -150,7 +150,9 @@ class EdgePipeline:
                         )
                         coordinates = mask_data.tolist()
                         masks.append(
-                            DetectionMask(conf=float(confidence), coordinates=coordinates)
+                            DetectionMask(
+                                conf=float(confidence), coordinates=coordinates
+                            )
                         )
 
                 # Only queue if potholes detected

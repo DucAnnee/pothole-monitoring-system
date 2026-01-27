@@ -254,7 +254,7 @@ services:
       POSTGRES_PASSWORD: hivepassword
       POSTGRES_DB: metastore
     ports:
-      - "5432:5432"
+      - "5436:5432"
     volumes:
       # - ./container-data/postgres:/var/lib/postgresql/data
       - postgres-data:/var/lib/postgresql/data

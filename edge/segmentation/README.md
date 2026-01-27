@@ -9,5 +9,5 @@ python summary.py --folder ./results --recursive
 python summary.py --folder ./results --recursive --metric "metrics/mAP50-95(B)"
 
 ### Minimize loss instead
-python summary.py --folder ./results --recursive --metric "val/seg_loss" --goal min
+python summary.py --folder ./results --recursive --metric "val/seg\_loss" --goal min
 
