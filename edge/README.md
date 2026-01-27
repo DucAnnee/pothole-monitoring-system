@@ -55,9 +55,9 @@ The edge pipeline implements a multi-threaded architecture that:
 
 ## Key Components
 
-### EdgePipeline Class
+### EdgePipeline Class 
 
-Main orchestrator that manages the complete pipeline lifecycle.
+Main orchestrator that manages the complete pipeline lifecycle. Located in [`main.py`](./main.py)
 
 **Initialization:**
 ```python
@@ -77,7 +77,7 @@ pipeline = EdgePipeline(config_path="config.yaml", video_path="path/to/video.mp4
 
 ### Segmentation Module
 
-Located in `segmentation/pothole_segmenter.py`, provides abstract base class with two implementations:
+Located in [`segmentation/pothole_segmenter.py`](./segmentation/pothole_segmenter.py), provides abstract base class with two implementations:
 
 **Factory Pattern:**
 ```python
@@ -106,7 +106,7 @@ segmenter = PotholeSegmenter.create(
 
 ### Uploader Module
 
-Located in `uploader.py`, handles all cloud interactions and offline storage.
+Located in [`uploader.py`](./uploader.py), handles all cloud interactions and offline storage.
 
 **Features:**
 - Kafka producer with Avro serialization
@@ -169,7 +169,7 @@ Located in `uploader.py`, handles all cloud interactions and offline storage.
 
 ## Data Models
 
-Located in `data_models.py`:
+Located in [`data_models.py`](./data_models.py):
 
 **DetectionMask:**
 ```python
@@ -203,7 +203,7 @@ class BundledData:
 
 ## Configuration
 
-The pipeline reads settings from `config.yaml`:
+The pipeline reads settings from [`config.yaml`](./config.yaml):
 
 ```yaml
 # Model selection
@@ -384,7 +384,7 @@ Queue depth: 2
 - **Signal handlers**: Graceful shutdown on SIGINT/SIGTERM
 
 ## Dependencies
-**Installation:**
+**Installation with [`requirements.txt`](./requirements.txt):** 
 ```bash
 pip install -r requirements.txt
 ```
