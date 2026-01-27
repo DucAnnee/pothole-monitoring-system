@@ -1,161 +1,259 @@
 # Edge Pipeline
 
-The main orchestrator for the edge device pipeline that coordinates pothole detection, processing, and data uploading.
+The main orchestrator for the edge device pipeline that coordinates pothole detection, segmentation, and cloud upload with offline fallback capabilities.
 
 ## Overview
 
-The `edge_pipeline.py` module implements a multi-threaded pipeline that:
-1. Processes video frames to detect potholes using YOLO segmentation
-2. Queues detections in memory for processing
-3. Enriches detection data and uploads to cloud services (Kafka/S3)
-4. Handles offline scenarios with persistent storage
-5. Provides real-time visualization with OpenCV
+The edge pipeline implements a multi-threaded architecture that:
+1. Processes video frames or camera feed to detect potholes using YOLO or RF-DETR segmentation models
+2. Queues detections in memory for asynchronous processing
+3. Bundles detection data with metadata (GPS, timestamps, confidence scores)
+4. Uploads to cloud services (Kafka + MinIO S3)
+5. Handles offline scenarios with persistent local storage
+6. Provides real-time visualization with OpenCV
 
 ## Architecture
 
 ```
-      ┌─────────────────┐
-      │  Video Source   │
-      └────────┬────────┘
-               │
-               ▼
-┌─────────────────────────────┐
-│  Inference Worker           │
-│  - Frame sampling           │
-│  - YOLO segmentation        │
-│  - Trapezoid filtering      │
-│  - Detection queueing       │
-└──────────────┬──────────────┘
-               │
-               │ (In-memory Queue)
-               ▼
-┌─────────────────────────────┐
-│  Processing Worker          │
-│  - Surface area estimation  │
-│  - Cloud upload             │
-│  - Offline storage          │
-│  - Connection recovery      │
-└─────────────────────────────┘
+       ┌─────────────────────┐
+       │  Video Source       │
+       │  (File or Camera)   │
+       └──────────┬──────────┘
+                  │
+                  ▼
+┌──────────────────────────────────┐
+│  Inference Worker                │
+│  - Frame sampling                │
+│  - Trapezoid ROI masking         │
+│  - Model inference (YOLO/RFDETR) │
+│  - Pothole filtering             │
+│  - Detection queueing            │
+│  - Real-time visualization       │
+└─────────────────┬────────────────┘
+                  │
+                  │ (In-memory Queue, max 100)
+                  ▼
+┌──────────────────────────────────┐
+│  Uploading Worker                │
+│  - Detection bundling            │
+│  - GPS coordinate generation     │
+│  - Cloud upload (Kafka + MinIO)  │
+│  - Offline storage fallback      │
+│  - Connection recovery           │
+│  - Local storage processing      │
+└─────────────────┬────────────────┘
+                  │                   ┌──────────────────┐
+                  ├─ (Online) ──────► │ MinIO + Kafka    │
+                  │                   │ (Cloud Storage)  │
+                  │                   └──────────────────┘
+                  │                   
+                  │                   ┌──────────────────┐
+                  └─ (Offline) ─────► │ ./local_storage/ │
+                                      │ (Disk Storage)   │
+                                      └──────────────────┘
 ```
 
 ## Key Components
 
 ### EdgePipeline Class
 
-Main orchestrator that manages the pipeline lifecycle.
+Main orchestrator that manages the complete pipeline lifecycle.
 
-#### Initialization
+**Initialization:**
 ```python
-pipeline = EdgePipeline(config_path="config.yaml")
+pipeline = EdgePipeline(config_path="config.yaml", video_path="path/to/video.mp4")
 ```
 
 **Parameters:**
-- `config_path` (str): Path to YAML configuration file
+- `config_path` (str): Path to YAML configuration file (default: `"config.yaml"`)
+- `video_path` (str, optional): Path to video file. If not provided, uses camera device 0
 
 **Attributes:**
-- `vehicle_id` (str): Unique vehicle identifier (auto-generated)
-- `detection_queue` (Queue): In-memory queue (max 100 items)
-- `segmenter` (PotholeSegmentationYOLO): Segmentation model
-- `processor` (ProcessingUploader): Upload and storage handler
-- `running` (bool): Pipeline state flag
+- `vehicle_id` (str): Unique vehicle identifier (auto-generated with UUID prefix)
+- `detection_queue` (Queue): Thread-safe in-memory queue (maxsize=100)
+- `segmenter` (PotholeSegmenter): Segmentation model instance (YOLO or RF-DETR)
+- `uploader` (Uploader): Upload and storage handler
+- `running` (bool): Pipeline state flag for coordinated shutdown
+
+### Segmentation Module
+
+Located in `segmentation/pothole_segmenter.py`, provides abstract base class with two implementations:
+
+**Factory Pattern:**
+```python
+segmenter = PotholeSegmenter.create(
+    model_type="yolo",  # or "rfdetr"
+    model_path="models/yolo11s.pt",
+    trapezoid_coords=np.array([[...], [...], [...], [...]]),
+    confidence_threshold=0.25
+)
+```
+
+**YOLOSegmenter:**
+- Uses Ultralytics YOLO segmentation models
+- Returns masks as contour coordinates (N, 2)
+- Dependency: `ultralytics`
+
+**RFDETRSegmenter:**
+- Uses RF-DETR segmentation model
+- Converts binary masks to contours
+- Dependency: `rfdetr`
+
+**Key Methods:**
+- `segment(frame_rgb)`: Returns list of (mask_coords, confidence) tuples
+- `create_masked_image(frame_rgb)`: Applies trapezoid ROI masking
+- `pothole_in_trapezoid(mask, frame_shape)`: Filters detections outside ROI
+
+### Uploader Module
+
+Located in `uploader.py`, handles all cloud interactions and offline storage.
+
+**Features:**
+- Kafka producer with Avro serialization
+- MinIO S3 image storage
+- Persistent local storage for offline mode
+- Automatic connection recovery
+- GPS coordinate simulation
+
+**Key Methods:**
+- `process_detection(detection)`: Bundles masks into individual events
+- `upload_to_cloud(bundled)`: Uploads to Kafka + MinIO
+- `store_to_disk(bundled)`: Persists to local storage
+- `process_local_storage()`: Uploads stored data when back online
 
 ### Worker Threads
 
-#### 1. Inference Worker (`inference_worker`)
+#### 1. Inference Worker
 
-Processes video frames and detects potholes.
+**Thread Target:** `inference_worker()`
 
-**Responsibilities:**
-- Read video frames from source
-- Apply frame interval sampling
-- Create masked images with trapezoid ROI
-- Run YOLO inference
-- Filter detections within trapezoid
-- Queue valid detections
-- Display real-time visualization
+**Flow:**
+1. Opens video source (file or camera device 0)
+2. Samples frames based on `frame_interval` config
+3. Converts frame to RGB format
+4. Runs segmentation model
+5. Filters potholes within trapezoid ROI
+6. Bundles valid detections as `DetectionData`
+7. Queues detections (with timeout protection)
+8. Displays visualization (if enabled)
 
 **Visualization:**
-- Green trapezoid: Detection region of interest
-- Blue filled areas: Detected potholes
-- Press 'q' to quit
-
-#### 2. Processing Worker (`processing_worker`)
-
-Processes queued detections and handles uploads.
-
-**Responsibilities:**
-- Dequeue detections from in-memory queue
-- Enrich detection data (GPS, metadata)
-- Upload to cloud (Kafka + S3)
-- Handle offline storage
-- Monitor connection status
-- Process persistent storage when back online
+- **Green polyline**: Trapezoid detection region
+- **Blue filled polygons**: Detected potholes
+- **Window controls**: Press `Q` to quit
 
 **Error Handling:**
-- Automatic offline mode on upload failure
-- Periodic connection checks (every 10 stored items)
-- Persistent storage recovery on reconnection
+- Video open failure → Stops pipeline
+- Frame read failure → Graceful shutdown
+- Queue full → Drops frame with warning
 
-## Pipeline Lifecycle
+#### 2. Uploading Worker
 
-### Starting the Pipeline
+**Thread Target:** `uploading_worker()`
 
+**Flow:**
+1. Processes local storage on startup (if online)
+2. Dequeues detections from memory queue
+3. Bundles each mask into separate `BundledData`
+4. Attempts cloud upload (Kafka + MinIO)
+5. Falls back to local storage on failure
+6. Periodically checks connection status (every 10 stored items)
+7. Processes stored data when reconnected
+
+**Offline Mode:**
+- Automatically triggered on upload failure
+- Stores images to `local/images/`
+- Stores metadata to `local/metadata/`
+- Periodic connection health checks
+- Automatic recovery and backlog processing
+
+## Data Models
+
+Located in `data_models.py`:
+
+**DetectionMask:**
 ```python
-pipeline = EdgePipeline(config_path="config.yaml")
-pipeline.start()
+@dataclass
+class DetectionMask:
+    conf: float
+    coordinates: List[List[float]]  # [[x1, y1], [x2, y2], ...]
 ```
 
-**Startup Sequence:**
-1. Load configuration
-2. Initialize segmentation model
-3. Initialize processing/upload handlers
-4. Check online/offline status
-5. Start inference thread
-6. Start processing thread
-7. Monitor and report stats
+**DetectionData:**
+```python
+@dataclass
+class DetectionData:
+    frame_id: str
+    timestamp: datetime
+    frame: np.ndarray  # RGB image
+    masks: List[DetectionMask]
+```
 
-### Stopping the Pipeline
-
-**Methods:**
-- Press `Ctrl+C` (SIGINT)
-- Press `q` in visualization window
-- Send SIGTERM signal
-- Call `pipeline.stop()` programmatically
-
-**Shutdown Sequence:**
-1. Set `running` flag to False
-2. Wait for threads to finish (5s timeout)
-3. Flush Kafka producer
-4. Print final statistics
+**BundledData:**
+```python
+@dataclass
+class BundledData:
+    event_id: str
+    frame_id: str
+    timestamp: datetime
+    frame: np.ndarray
+    conf: float
+    coordinates: List[List[float]]
+```
 
 ## Configuration
 
 The pipeline reads settings from `config.yaml`:
 
 ```yaml
-model:
-  type: yolo
-  path: models/pothole_model.pt
-  confidence_threshold: 0.5
+# Model selection
+model_type: "yolo"  # or "rfdetr"
 
-video:
-  path: data/test_video.mp4
-  frame_interval: 5
+# Model configurations
+models:
+  yolo:
+    weights_path: "models/yolo11s.pt"
+    confidence_threshold: 0.1
+  rfdetr:
+    weights_path: "models/rfdetr.pth"
+    confidence_threshold: 0.25
 
-detection:
+# Processing parameters
+processing:
+  frame_interval: 3  # Process every Nth frame
+
+# Monitoring
+enable_monitoring: true
+
+# Detection region (normalized coordinates 0-1)
+detection_region:
   trapezoid_coords:
-    - [0.2, 0.6]
-    - [0.8, 0.6]
-    - [0.95, 0.95]
-    - [0.05, 0.95]
+    - [0.4034, 0.5731]  # Top-Left
+    - [0.5081, 0.5796]  # Top-Right
+    - [0.6456, 0.7972]  # Bottom-Right
+    - [0.3268, 0.7843]  # Bottom-Left
 
+# Kafka configuration
 kafka:
-  bootstrap_servers: localhost:9092
-  topic: pothole-detections
+  topic: "pothole.raw.events.v1"
+  bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
+  schema_registry_url: "http://localhost:8082"
 
-aws:
-  bucket: pothole-images
-  region: us-east-1
+# MinIO configuration
+minio:
+  endpoint: "localhost:9000"
+  access_key: "${MINIO_ACCESS_KEY:minioadmin}"
+  secret_key: "${MINIO_SECRET_KEY:minioadmin}"
+  bucket: "warehouse"
+  prefix: "raw_images"
+  secure: false
+
+# GPS simulation (HCM City bounds)
+gps:
+  lat_min: 10.7
+  lat_max: 10.9
+  lon_min: 106.6
+  lon_max: 106.8
 ```
 
 ## Usage
@@ -163,128 +261,259 @@ aws:
 ### Command Line
 
 ```bash
-# Use default config.yaml
-python edge_pipeline.py
+# Use default config and test video
+python main.py
 
-# Specify custom config
-python edge_pipeline.py --config custom_config.yaml
+# Custom config
+python main.py --config custom_config.yaml
+
+# Different video
+python main.py --video path/to/video.mp4
+
+# Both custom
+python main.py --config custom.yaml --video test.mp4
 ```
 
 ### Programmatic
 
 ```python
-from edge_pipeline import EdgePipeline
+from main import EdgePipeline
 
-# Initialize pipeline
-pipeline = EdgePipeline(config_path="config.yaml")
+# Initialize
+pipeline = EdgePipeline(
+    config_path="config.yaml",
+    video_path="assets/test.mp4"
+)
 
 # Start processing
 pipeline.start()
 
-# Stop when done
+# Stop gracefully (or Ctrl+C)
 pipeline.stop()
 ```
 
-## Queue Management
+## Pipeline Lifecycle
 
-The detection queue has a maximum size of 100 items to prevent out-of-memory issues.
+### Startup Sequence
 
-**Queue Behavior:**
-- **Full Queue:** Drops new frames with warning message
-- **Empty Queue:** Processing worker blocks with 1s timeout
-- **Queue Size:** Reported in stats every 30 seconds
+1. Load and validate configuration (`config_loader.py`)
+2. Generate unique vehicle ID
+3. Initialize detection queue (maxsize=100)
+4. Initialize segmentation model (YOLO or RF-DETR)
+5. Initialize uploader (connect to Kafka + MinIO)
+6. Check online/offline status
+7. Start inference worker thread (daemon)
+8. Start uploading worker thread (daemon)
+9. Enter monitoring loop with 30s stats reporting
+
+### Shutdown Sequence
+
+**Triggers:**
+- Press `Ctrl+C` (SIGINT)
+- Press `Q` in visualization window
+- Send SIGTERM signal
+- Call `pipeline.stop()` method
+
+**Cleanup Steps:**
+1. Set `running = False` flag
+2. Join worker threads (5s timeout each)
+3. Flush Kafka producer buffer
+4. Print final statistics
+5. Clean up model resources (`segmenter.cleanup()`)
 
 ## Statistics & Monitoring
 
-The pipeline prints statistics every 30 seconds:
+The pipeline prints statistics every 30 seconds during operation:
 
 ```
-[STATS] Processed: 45 | Uploaded: 42 | Stored: 3 | Queue: 2
+======================================================================
+PROCESSING & UPLOAD STATISTICS
+======================================================================
+Processed:  145
+Uploaded:   142
+Stored:     3
+Failed:     0
+======================================================================
+Queue depth: 2
 ```
 
 **Metrics:**
-- `Processed`: Total detections processed
-- `Uploaded`: Successfully uploaded to cloud
-- `Stored`: Saved to persistent storage (offline)
-- `Queue`: Current in-memory queue depth
+- **Processed**: Total masks processed from detections
+- **Uploaded**: Successfully uploaded to cloud (Kafka + MinIO)
+- **Stored**: Persisted to local storage (offline mode)
+- **Failed**: Storage/upload failures
+- **Queue depth**: Current in-memory queue size
 
 ## Error Handling
 
 ### Inference Errors
-- Video file not found → Stop pipeline
-- Frame read failure → Stop pipeline gracefully
-- Model inference error → Log and continue
+- **Video not found**: Stops pipeline immediately
+- **Camera unavailable**: Stops pipeline with error message
+- **Frame read failure**: Graceful shutdown after logging
+- **Segmentation error**: Logs error, continues processing
 
-### Processing Errors
-- Upload failure → Switch to offline mode
-- Storage write error → Log and continue
-- Queue timeout → Check running flag and retry
+### Upload Errors
+- **Kafka connection lost**: Switches to offline mode, stores locally
+- **MinIO upload failure**: Stores locally, logs error
+- **Schema serialization error**: Logs error, increments failed counter
 
 ### Connection Recovery
-- Periodic health checks in offline mode
-- Automatic persistent storage processing on reconnection
-- Seamless transition between online/offline modes
+- **Periodic checks**: Every 10 stored items when offline
+- **Automatic reconnection**: Re-initializes Kafka + MinIO clients
+- **Backlog processing**: Uploads all stored data when back online
+- **Seamless transition**: No data loss between online/offline modes
 
-## Dependencies
+## Queue Management
 
-**Core:**
-- `numpy`: Array operations
-- `opencv-python (cv2)`: Video processing and display
-- `queue`: Thread-safe queueing
-- `threading`: Multi-threading support
+**Configuration:**
+- Maximum size: 100 items
+- Memory footprint: ~200MB (assuming 1080p RGB frames)
+- Timeout: 1 second for put/get operations
 
-**Project Modules:**
-- `config_loader`: Configuration management
-- `segmentation`: YOLO model wrapper
-- `processing_uploader`: Data enrichment and upload
-- `data_models`: Data structures (DetectionData, DetectionMask)
+**Behaviors:**
+- **Queue full**: Drops new detections with warning message
+- **Queue empty**: Upload worker blocks with 1s timeout
+- **Graceful handling**: No crashes on queue operations
 
 ## Thread Safety
 
-- **Queue:** Thread-safe `queue.Queue` for detection sharing
-- **Flags:** `running` flag for coordinated shutdown
-- **Resources:** Each thread manages its own resources
-- **No Shared State:** Workers communicate only via queue
+- **Queue**: Thread-safe `queue.Queue` for detection passing
+- **Flags**: Atomic `running` flag for coordinated shutdown
+- **Resource isolation**: Each thread manages its own resources
+- **No shared state**: Workers communicate exclusively via queue
+- **Signal handlers**: Graceful shutdown on SIGINT/SIGTERM
+
+## Dependencies
+**Installation:**
+```bash
+pip install -r requirements.txt
+```
+
+**Core Libraries:**
+- `numpy`: Array operations and coordinate transformations
+- `opencv-python (cv2)`: Video I/O and image processing
+- `pyyaml`: Configuration file parsing
+- `confluent-kafka`: Kafka producer with Avro support
+- `minio`: S3-compatible object storage client
+
+**Segmentation Models:**
+- `ultralytics`: YOLO segmentation (YOLOSegmenter)
+- `rfdetr`: RF-DETR segmentation (RFDETRSegmenter)
+
+**Project Modules:**
+- `config_loader`: Configuration management with env var substitution
+- `segmentation`: Model abstraction and inference
+- `uploader`: Cloud upload and offline storage
+- `data_models`: Data structures (DetectionData, BundledData, DetectionMask)
 
 ## Performance Considerations
 
 ### Memory Management
-- Queue size limited to 100 items (~200MB max for 1080p frames)
-- Frames released after processing
-- Persistent storage for offline scenarios
+- Queue limited to 100 items (~200MB for 1080p)
+- Frames released after bundling
+- Persistent storage uses disk, not RAM
+- Model cleanup on shutdown
 
 ### CPU Usage
-- Frame interval controls inference frequency
+- Frame interval controls inference frequency (default: every 3rd frame)
 - Separate threads prevent blocking
-- Efficient mask operations with NumPy
+- NumPy vectorized operations for masks
+- Efficient contour extraction with OpenCV
 
 ### I/O Optimization
-- Batch uploads when online
-- Async Kafka producer
-- Compressed image storage
+- Asynchronous Kafka producer with batching
+- Compressed JPEG storage (quality optimized)
+- MinIO streaming uploads
+- Local storage with separate image/metadata dirs
+
+### Network Optimization
+- Avro schema evolution support
+- Compressed image format (JPEG)
+- Connection pooling via Kafka producer
+- Automatic retry with exponential backoff (planned)
 
 ## Troubleshooting
 
 ### Pipeline Won't Start
-- Check video path in config
-- Verify model file exists
-- Check Kafka/S3 connectivity (offline mode OK)
+
+**Issue**: Configuration errors
+```bash
+# Solution: Validate config file
+python -c "from config_loader import load_config; load_config().print_config_summary()"
+```
+
+**Issue**: Model file not found
+```bash
+# Solution: Check weights path
+ls -la models/yolo11s.pt  # or models/rfdetr.pth
+```
+
+**Issue**: Cloud services unavailable
+- Check: Kafka brokers at `localhost:19092,29092,39092`
+- Check: MinIO at `localhost:9000`
+- Solution: Pipeline will run in offline mode automatically
 
 ### High Queue Depth
-- Increase `frame_interval` to reduce load
-- Check network bandwidth
-- Verify cloud service performance
 
-### Display Issues
-- Ensure X11/display server available
-- Check OpenCV installation
-- Verify window manager compatibility
+**Symptoms**: Queue depth consistently near 100
+
+**Solutions:**
+1. Increase `frame_interval` in config (e.g., 3 → 5)
+2. Check network bandwidth to Kafka/MinIO
+3. Verify cloud service performance
+4. Consider reducing video resolution
+5. Check if upload worker is blocked
+
+### Visualization Issues
+
+**Issue**: Window not displaying
+
+**Solutions:**
+- Verify X11/Wayland display server is running
+- Check `DISPLAY` environment variable
+- Set `enable_monitoring: false` in config for headless mode
+- Install full OpenCV: `pip install opencv-python` (not `opencv-python-headless`)
+
+### Memory Leaks
+
+**Symptoms**: Memory usage grows over time
+
+**Solutions:**
+1. Check queue is being consumed (queue depth should fluctuate)
+2. Verify frames are released after processing
+3. Monitor `local/` directory size (offline storage)
+4. Restart pipeline periodically if needed
+
+## File Structure
+
+```
+edge/
+├── main.py                      # Main pipeline orchestrator
+├── config.yaml                  # Configuration file
+├── config_loader.py             # Config parser with env var support
+├── uploader.py                  # Cloud upload and offline storage
+├── data_models.py               # Data structures
+├── segmentation/
+│   ├── __init__.py              # Module exports
+│   └── pothole_segmenter.py     # Segmentation abstraction
+├── models/                      # Model weights (gitignored)
+│   ├── yolo11s.pt
+│   └── rfdetr.pth
+├── local/                       # Offline storage (auto-created)
+│   ├── images/                  # Stored frames
+│   └── metadata/                # Detection metadata JSON
+└── README.md                    # This file
+```
 
 ## Future Enhancements
 
-- [ ] Support for RT-DETR model
-- [ ] Multi-camera support
+- [x] Web-based monitoring dashboard
+- [x] Support for RF-DETR model
+- [x] Offline storage with automatic recovery
+- [x] Configurable queue size
+- [ ] Multi-camera support with camera selection
 - [ ] Hardware acceleration (CUDA/TensorRT)
-- [ ] Configurable queue size
-- [ ] Web-based monitoring dashboard
-- [ ] Graceful reconnection with exponential backoff
+- [ ] Exponential backoff for connection retry
+- [ ] Configurable GPS source (not just simulation)
+- [ ] Real-time metrics export (Prometheus/Grafana)
+- [ ] Dynamic frame interval based on detection density

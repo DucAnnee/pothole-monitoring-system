@@ -1,27 +1,29 @@
 """
 Main edge device pipeline orchestrator.
-Coordinates inference, processing, and uploading with in-memory queues.
+Coordinates inference and uploading with in-memory queues.
 """
 
-import queue
-import threading
 import time
+import queue
 import signal
-import sys
+import threading
 import numpy as np
 from uuid import uuid4
 from datetime import datetime
 
+from uploader import Uploader
 from config_loader import load_config
-from segmentation import PotholeSegmentationYOLO, PotholeSegmentationRFDETR
-from processing_uploader import ProcessingUploader
 from data_models import DetectionData, DetectionMask
+from segmentation import PotholeSegmenter
 
 
+# ============================================================================
+# MAIN EDGE PIPELINE ORCHESTRATOR
+# ============================================================================
 class EdgePipeline:
-    """Main pipeline orchestrator."""
+    """Main Edge pipeline orchestrator."""
 
-    def __init__(self, config_path="config.yaml"):
+    def __init__(self, config_path="config.yaml", video_path=None):
         """
         Initialize the edge pipeline.
 
@@ -29,20 +31,21 @@ class EdgePipeline:
             config_path: Path to configuration file
         """
         self.config = load_config(config_path)
+        self.video_path = video_path
         self.vehicle_id = f"vehicle-{uuid4().hex[:8]}"
 
-        # In-memory queue (max 100 items to prevent OOM)
+        # in-memory queue
         self.detection_queue = queue.Queue(maxsize=100)
 
-        # Initialize modules
+        # modules init
         self.segmenter = self._initialize_segmenter()
-        self.processor = ProcessingUploader(self.config, self.vehicle_id)
+        self.uploader = Uploader(self.config, self.vehicle_id)
 
-        # Control flags
+        # control flags
         self.running = False
         self.threads = []
 
-        # Setup signal handlers for graceful shutdown
+        # signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
@@ -53,22 +56,12 @@ class EdgePipeline:
         self.confidence_threshold = self.config.get_confidence_threshold()
         print("[INFO] Initializing segmentation model...")
 
-        if model_type == "yolo":
-            return PotholeSegmentationYOLO(
-                model_path=self.config.get_model_path(),
-                trapezoid_coords=self.config.get_trapezoid_coords(),
-                confidence_threshold=self.config.get_confidence_threshold(),
-                frame_interval=self.config.get_frame_interval(),
-            )
-        elif model_type == "rfdetr":
-            return PotholeSegmentationRFDETR(
-                model_path=self.config.get_model_path(),
-                trapezoid_coords=self.config.get_trapezoid_coords(),
-                confidence_threshold=self.config.get_confidence_threshold(),
-                frame_interval=self.config.get_frame_interval(),
-            )
-        else:
-            raise ValueError(f"Unsupported model type: {model_type}")
+        return PotholeSegmenter.create(
+            model_type=model_type,
+            model_path=self.config.get_model_path(),
+            trapezoid_coords=self.config.get_trapezoid_coords(),
+            confidence_threshold=self.config.get_confidence_threshold(),
+        )
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals."""
@@ -79,57 +72,57 @@ class EdgePipeline:
         """Inference worker thread - processes video and produces detections."""
         print("[INFO] Inference worker started")
 
-        video_path = self.config.get_video_path()
-        if not video_path:
-            print("[ERROR] can't resolve video path from configuration")
-            self.running = False
-            return
-
         try:
             import cv2
 
-            cap = cv2.VideoCapture(video_path)
+            if self.video_path:
+                print("[INFO] Video path provided, running inference on video file")
+                cap = cv2.VideoCapture(self.video_path)
+            else:
+                print("[INFO] Running inference on camera (Device 0)")
+                # TODO: allow camera selection from config & poll available cameras
+                cap = cv2.VideoCapture(0)
 
             if not cap.isOpened():
-                print(f"[ERROR] Could not open video: {video_path}")
+                print(f"[ERROR] Could not open video: {self.video_path}")
                 return
 
             frame_count = 0
             frame_interval = self.config.get_frame_interval()
 
-            # Create named window with proper flags
-            window_name = "Pothole Segmentation"
-            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-            cv2.resizeWindow(window_name, 1280, 720)
+            # monitor window init
+            enable_monitoring = self.config.get_enable_monitoring()
+            if enable_monitoring:
+                window_name = "Pothole Segmentation"
+                cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+                cv2.resizeWindow(window_name, 1280, 720)
 
             while self.running and cap.isOpened():
                 ret, frame = cap.read()
 
                 if not ret:
-                    print("[INFO] Video ended, stopping...")
+                    print("[INFO] End of video stream or cannot fetch frame.")
                     self.running = False
                     break
 
                 frame_count += 1
 
-                # Sample frames based on interval
+                # sample frames based on interval
                 if frame_count % frame_interval != 0:
                     continue
 
-                # Run inference
+                # run inference
                 display_frame = frame.copy()
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pothole_masks = self.segmenter.segment(frame_rgb)
 
-                # Use unified segment_potholes method (works for both YOLO and RF-DETR)
-                pothole_masks = self.segmenter.segment_potholes(frame_rgb)
-
-                # Denormalize trapezoid for display
+                # denormalize trapezoid for display
                 w, h = frame.shape[1], frame.shape[0]
                 display_trapezoid = (
                     self.normalized_trapezoid * np.array([w, h])
                 ).astype(np.int32)
 
-                # Draw trapezoid detection area (not filled)
+                # draw trapezoid detection area
                 cv2.polylines(
                     display_frame,
                     [display_trapezoid],
@@ -138,11 +131,11 @@ class EdgePipeline:
                     2,
                 )
 
-                # Extract masks - filter for those in trapezoid
+                # get segmentation masks and filter for those in trapezoid area
                 masks = []
                 for mask_data, confidence in pothole_masks:
                     if self.segmenter.pothole_in_trapezoid(mask_data, frame.shape):
-                        # Draw pothole on display frame
+                        # draw pothole on display frame
                         cv2.fillPoly(
                             display_frame,
                             [mask_data.astype(np.int32)],
@@ -155,7 +148,7 @@ class EdgePipeline:
                             )
                         )
 
-                # Only queue if potholes detected
+                # only queue if potholes detected
                 if masks:
                     detection = DetectionData(
                         frame_id=f"frame_{frame_count:06d}",
@@ -172,10 +165,11 @@ class EdgePipeline:
                     except queue.Full:
                         print("[WARN] Detection queue full, dropping frame")
 
-                # Display frame
-                cv2.imshow(window_name, display_frame)
+                # display frame
+                if enable_monitoring:
+                    cv2.imshow(window_name, display_frame)  # type: ignore
 
-                # Check for quit key - MUST have waitKey for window to update
+                # check for quit key
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     print("\n[INFO] 'q' pressed, stopping inference...")
@@ -187,104 +181,105 @@ class EdgePipeline:
         except Exception as e:
             print(f"[ERROR] Inference worker failed: {e}")
 
-    def processing_worker(self):
-        """Processing and upload worker thread."""
-        print("[INFO] Processing worker started")
+    def uploading_worker(self):
+        """Uploading worker thread."""
+        print("[INFO] Uploading worker started")
 
-        # First, clear persistent storage if online
-        if self.processor.is_online:
-            print("[INFO] Clearing persistent storage...")
-            self.processor.process_persistent_storage()
-            self.processor.flush()
+        # process local storage if online
+        if self.uploader.is_online:
+            print("[INFO] Processing local storage...")
+            self.uploader.process_local_storage()
+            self.uploader.flush()
 
-        # Process detection queue
+        # process detection queue
         while self.running:
             try:
-                # Get detection from queue (timeout to check running flag)
+                # get detection from queue
                 detection = self.detection_queue.get(timeout=1.0)
 
-                # Process detection
-                enriched_list = self.processor.process_detection(detection)
-                self.processor.stats["processed"] += len(enriched_list)
+                # process detection
+                enriched_list = self.uploader.process_detection(detection)
+                self.uploader.stats["processed"] += len(enriched_list)
 
-                # Upload or store
+                # upload or store
                 for enriched in enriched_list:
-                    if self.processor.is_online:
-                        success = self.processor.upload_to_cloud(enriched)
+                    if self.uploader.is_online:
+                        success = self.uploader.upload_to_cloud(enriched)
                         if not success:
-                            # Connection lost, store to disk
+                            # connection lost, store to disk
                             print("[WARN] Upload failed, storing to disk")
-                            self.processor.store_to_disk(enriched)
-                            self.processor.is_online = False
+                            self.uploader.store_to_disk(enriched)
+                            self.uploader.is_online = False
                     else:
-                        # Offline mode, store to disk
-                        self.processor.store_to_disk(enriched)
+                        # offline mode, store to disk
+                        self.uploader.store_to_disk(enriched)
 
-                        # Periodically check if back online
-                        if self.processor.stats["stored"] % 10 == 0:
+                        # periodically check if back online
+                        if self.uploader.stats["stored"] % 10 == 0:
                             print("[INFO] Checking connection status...")
-                            self.processor._initialize_connections()
-                            if self.processor.is_online:
+                            self.uploader._initialize_connections()
+                            if self.uploader.is_online:
                                 print("[INFO] Back online! Processing stored data...")
-                                self.processor.process_persistent_storage()
+                                self.uploader.process_local_storage()
 
                 self.detection_queue.task_done()
 
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"[ERROR] Processing worker failed: {e}")
+                print(f"[ERROR] Uploading worker failed: {e}")
 
     def start(self):
         """Start the pipeline."""
         print("=" * 70)
-        print("EDGE DEVICE PIPELINE")
+        print("EDGE DEVICE WORKER")
         print("=" * 70)
         print(f"Vehicle ID: {self.vehicle_id}")
         print(f"Model: {self.config.get_model_type().upper()}")
-        print(f"Video: {self.config.get_video_path()}")
-        print(f"Online: {self.processor.is_online}")
+        print(f"Online: {self.uploader.is_online}")
         print("=" * 70)
 
         self.running = True
 
-        # Start worker threads
+        # start worker threads
         inference_thread = threading.Thread(target=self.inference_worker, daemon=True)
-        processing_thread = threading.Thread(target=self.processing_worker, daemon=True)
-
+        uploading_thread = threading.Thread(target=self.uploading_worker, daemon=True)
         inference_thread.start()
-        processing_thread.start()
+        uploading_thread.start()
 
-        self.threads = [inference_thread, processing_thread]
+        self.threads = [inference_thread, uploading_thread]
 
         print("[INFO] Pipeline started. Press Ctrl+C to stop.\n")
 
-        # Monitor threads
+        # threads monitoring
         try:
             while self.running:
                 time.sleep(1)
 
-                # Print stats every 30 seconds
+                # print stats every 30 seconds
                 if int(time.time()) % 30 == 0:
-                    self.processor.print_stats()
+                    self.uploader.print_stats()
                     print(f"Queue depth: {self.detection_queue.qsize()}")
 
         except KeyboardInterrupt:
             pass
 
     def stop(self):
-        """Stop the pipeline."""
+        """Stop the edge worker"""
         self.running = False
 
-        # Wait for threads to finish
+        # wait for threads to finish
         for thread in self.threads:
             thread.join(timeout=5.0)
 
-        # Flush Kafka producer
-        self.processor.flush()
+        # flush Kafka producer
+        self.uploader.flush()
 
-        # Print final stats
-        self.processor.print_stats()
+        # print final stats
+        self.uploader.print_stats()
+
+        # delete model resources
+        self.segmenter.cleanup()
 
         print("[INFO] Pipeline stopped")
 
@@ -293,16 +288,22 @@ def main():
     """Main entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Edge Device Pipeline")
+    parser = argparse.ArgumentParser(description="Edge device worker")
     parser.add_argument(
         "--config",
         type=str,
         default="config.yaml",
         help="Path to configuration file (default: config.yaml)",
     )
+    parser.add_argument(
+        "--video",
+        type=str,
+        default="./assets/test.mp4",
+        help="Path to input video file to run test on (default: ./assets/test.mp4)",
+    )
     args = parser.parse_args()
 
-    pipeline = EdgePipeline(config_path=args.config)
+    pipeline = EdgePipeline(config_path=args.config, video_path=args.video)
     pipeline.start()
 
 

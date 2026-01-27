@@ -1,0 +1,17 @@
+# Core dependencies
+numpy>=1.24.0
+opencv-python>=4.8.0
+PyYAML>=6.0
+
+# Kafka and streaming
+confluent-kafka[avro]>=2.3.0
+
+# Object storage
+minio>=7.2.0
+
+# Segmentation models (choose based on model_type in config)
+# For YOLO segmentation
+ultralytics>=8.0.0
+
+# For RF-DETR segmentation (optional, uncomment if using RF-DETR)
+# rfdetr

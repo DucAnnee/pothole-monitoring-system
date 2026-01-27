@@ -1,4 +1,3 @@
-from .pothole_segmentation import PotholeSegmentationYOLO
-from .pothole_segmentation_rfdetr import PotholeSegmentationRFDETR
+from pothole_segmenter import PotholeSegmenter, YOLOSegmenter, RFDETRSegmenter
 
-__all__ = ["PotholeSegmentationYOLO", "PotholeSegmentationRFDETR"]
+__all__ = ["PotholeSegmenter", "YOLOSegmenter", "RFDETRSegmenter"]

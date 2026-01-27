@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Literal
 import yaml
 import os
 import numpy as np
@@ -84,18 +84,13 @@ class ConfigLoader:
     # ========================================================================
     # Convenience getters for accessing configuration values
     # ========================================================================
+    def get_enable_monitoring(self) -> bool:
+        """Check if monitoring is enabled"""
+        return self.config.get("enable_monitoring", False)
 
-    def get_model_type(self) -> str:
+    def get_model_type(self) -> Literal["yolo", "rfdetr"]:
         """Get selected model type"""
         return self.config["model_type"]
-
-    def get_video_path(self) -> str | None:
-        """Get video input path"""
-        return (
-            self.config["video"]["input_path"]
-            if "input_path" in self.config["video"]
-            else None
-        )
 
     def get_model_config(self) -> dict:
         """Get configuration for the selected model"""
@@ -240,10 +235,10 @@ def load_config(config_path="config.yaml"):
 
 
 if __name__ == "__main__":
-    # Test configuration loader
+    # test configuration loader
     try:
         config = load_config()
         config.print_config_summary()
-        print("✓ Configuration loaded successfully!")
+        print("Configuration loaded successfully!")
     except Exception as e:
-        print(f"✗ Configuration error: {e}")
+        print(f"Configuration error: {e}")

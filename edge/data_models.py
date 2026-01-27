@@ -2,9 +2,9 @@
 Shared data models for the edge device pipeline.
 """
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 import numpy as np
 
 
@@ -37,15 +37,12 @@ class DetectionData:
 
 
 @dataclass
-class EnrichedData:
-    """Enriched data ready for upload."""
+class BundledData:
+    """Bundled data ready for upload."""
 
     event_id: str
     frame_id: str
     timestamp: datetime
-    frame: np.ndarray  # Original RGB image
-    bev_frame: Optional[np.ndarray]  # Bird's eye view image
+    frame: np.ndarray  # original RGB image
     conf: float
     coordinates: List[List[float]]
-    bev_mask: Optional[List[List[float]]]
-    area_cm2: float

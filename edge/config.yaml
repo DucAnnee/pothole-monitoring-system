@@ -6,10 +6,10 @@
 # Model selection: "yolo" | "rfdetr"
 model_type: "yolo"
 
-# Video and Model paths
-video:
-  input_path: "assets/test.mp4"
+# Monitor window toggle
+enable_monitoring: true
 
+# Models settings
 models: 
   yolo:
     weights_path: "models/yolo11s.pt"
