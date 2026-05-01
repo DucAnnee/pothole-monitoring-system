@@ -185,13 +185,13 @@ class YOLOSegmenter(PotholeSegmenter):
 
         # process each detection
         if results and results[0].masks is not None:
-            print("=" * 70)
-            print(f"[INFO] Detections found: {len(results[0].masks)}")
-            print("=" * 70)
+            # print("=" * 70)
+            # print(f"[INFO] Detections found: {len(results[0].masks)}")
+            # print("=" * 70)
             masks_data = results[0].masks.xy if hasattr(results[0].masks, "xy") else []
-            print(masks_data)
+            # print(masks_data)
             confidences = results[0].boxes.conf if results[0].boxes is not None else []
-            print(confidences)
+            # print(confidences)
 
             for i, contour in enumerate(masks_data):
                 if i < len(confidences):
