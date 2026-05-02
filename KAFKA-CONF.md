@@ -1,11 +1,11 @@
 ### 📋 Kafka Schemas
 
-#### **1. pothole.raw.events.v1**
+#### **1. pothole.raw.events.v2**
 ```json
 {
   "type": "record",
   "name": "RawEvent",
-  "namespace": "pothole.raw.v1",
+  "namespace": "pothole.raw.v2",
   "fields": [
     {"name": "event_id", "type": "string"},
     {"name": "vehicle_id", "type": "string"},
@@ -13,11 +13,8 @@
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
-    {"name": "raw_image_path", "type": "string"},
-    {"name": "bev_image_path", "type": ["null", "string"], "default": null},
+    {"name": "raw_image_object_key", "type": "string"},
     {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
-    {"name": "bev_mask", "type": ["null", {"type": "array", "items": {"type": "array", "items": "double"}}], "default": null},
-    {"name": "surface_area_cm2", "type": "double"},
     {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
@@ -31,9 +28,13 @@
 - Added `bev_mask` (bird's-eye view mask coordinates, nullable)
 - Added `surface_area_cm2` (computed at edge device)
 
+**Changes from v1:**
+- Renamed `raw_image_path` -> `raw_image_object_key` ("object key" is a more appropriate term for Cloud object storage)
+- Removed `bev_image_path`, `bev_mask` and `surface_area_cm2` (moved to cloud service)
+
 ---
 
-#### **2. pothole.depth.v1** (NEW)
+#### **2. pothole.depth.v1**
 ```json
 {
   "type": "record",
@@ -43,6 +44,7 @@
     {"name": "event_id", "type": "string"},
     {"name": "depth_cm", "type": "double"},
     {"name": "confidence", "type": ["null", "double"], "default": null},
+    {"name": "surface_area_cm2", "type": "double"},
     {"name": "processed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
   ]
 }
@@ -51,16 +53,18 @@
 
 ---
 
-#### **3. pothole.surface.area.v1** ⚠️ DEPRECATED
-> **Note:** This topic is deprecated. Surface area is now computed at the edge device and included in `pothole.raw.events.v1` as `surface_area_cm2`. This topic may be removed in a future version.
+#### **3. pothole.surface.area.v2**
 
 ```json
 {
   "type": "record",
   "name": "SurfaceAreaEstimate",
-  "namespace": "pothole.surface.v1",
+  "namespace": "pothole.surface.v2",
   "fields": [
     {"name": "event_id", "type": "string"},
+    {"name": "raw_image_object_key", "type": "string"},
+    {"name": "bev_object_key", "type": "string"},
+    {"name": "bev_mask", "type": "string"},
     {"name": "surface_area_cm2", "type": "double"},
     {"name": "confidence", "type": ["null", "double"], "default": null},
     {"name": "processed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
@@ -68,6 +72,9 @@
 }
 ```
 **Partition key:** `event_id`
+
+**Changes from v1:**
+- Added `bev_object_key` and `bev_mask` as they are produced by the same service
 
 ---
 
@@ -97,9 +104,9 @@
 
 | Topic                         | Partitions | Key           | Retention | Compaction |
 |-------------------------------|------------|---------------|-----------|------------|
-| `pothole.raw.events.v1`       | 12         | `vehicle_id`  | 7 days    | Delete     |
+| `pothole.raw.events.v2`       | 12         | `vehicle_id`  | 7 days    | Delete     |
 | `pothole.depth.v1`            | 12         | `event_id`    | 3 days    | Delete     |
-| `pothole.surface.area.v1`     | 12         | `event_id`    | 3 days    | Delete     |
+| `pothole.surface.area.v2`     | 12         | `event_id`    | 3 days    | Delete     |
 | `pothole.severity.score.v1`   | 12         | `event_id`    | 7 days    | Delete     |
 
 DLQ topics:
@@ -118,14 +125,14 @@ pothole.severity.score.dlq.v1
 
 ## Core topics creation commands
 
-### 1. pothole.raw.events.v1
+### 1. pothole.raw.events.v2
 
 7 days retention
 
 ```bash
 kafka-topics.sh --bootstrap-server localhost:9092 \
 --create \
---topic pothole.raw.events.v1 \
+--topic pothole.raw.events.v2 \
 --partitions 12 \
 --replication-factor 3 \
 --config retention.ms=604800000 \
@@ -156,14 +163,14 @@ Partition key
 
 ---
 
-### 3. pothole.surface.area.v1
+### 3. pothole.surface.area.v2
 
 3 days retention
 
 ```bash
 kafka-topics.sh --bootstrap-server localhost:9092 \
 --create \
---topic pothole.surface.area.v1 \
+--topic pothole.surface.area.v2 \
 --partitions 12 \
 --replication-factor 3 \
 --config retention.ms=259200000 \
