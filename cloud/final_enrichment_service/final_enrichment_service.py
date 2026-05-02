@@ -94,7 +94,7 @@ RAW_EVENT_AVRO_SCHEMA = """
 {
   "type": "record",
   "name": "RawEvent",
-  "namespace": "pothole.raw.v1",
+  "namespace": "pothole.raw.v2",
   "fields": [
     {"name": "event_id", "type": "string"},
     {"name": "vehicle_id", "type": "string"},
@@ -102,11 +102,8 @@ RAW_EVENT_AVRO_SCHEMA = """
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
-    {"name": "raw_image_path", "type": "string"},
-    {"name": "bev_image_path", "type": ["null", "string"], "default": null},
+    {"name": "raw_image_object_key", "type": "string"},
     {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
-    {"name": "bev_mask", "type": ["null", {"type": "array", "items": {"type": "array", "items": "double"}}], "default": null},
-    {"name": "surface_area_cm2", "type": "double"},
     {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
@@ -423,7 +420,7 @@ class OSMGeocoder:
 class FinalEnrichmentService:
     """
     Main service that:
-    1. Consumes from BOTH pothole.raw.events.v1 AND pothole.severity.score.v1
+    1. Consumes from BOTH pothole.raw.events.v2 AND pothole.severity.score.v1
     2. Aggregates by event_id (waits for both to arrive)
     3. Deduplicates using H3
     4. Enriches with OSM + Redis cache
@@ -531,8 +528,7 @@ class FinalEnrichmentService:
             severity_score DOUBLE NOT NULL COMMENT 'Latest severity',
             severity_level VARCHAR NOT NULL COMMENT 'MINOR/MODERATE/HIGH/CRITICAL',
             pothole_polygon VARCHAR NOT NULL COMMENT 'Latest GeoJSON polygon',
-            raw_image_path VARCHAR COMMENT 'S3 path to raw perspective image (from most recent detection)',
-            bev_image_path VARCHAR COMMENT 'S3 path to birds-eye view image (from most recent detection)',
+            raw_image_object_key VARCHAR COMMENT 'MinIO object key for raw image (from most recent detection)',
             status VARCHAR NOT NULL COMMENT 'reported | in_progress | fixed',
             in_progress_at TIMESTAMP(3) COMMENT 'When repair started',
             fixed_at TIMESTAMP(3) COMMENT 'When repair completed',
@@ -789,9 +785,8 @@ class FinalEnrichmentService:
         street_name = escape_sql_string(address.get('street_name')) if address.get('street_name') else None
         road_id = escape_sql_string(address.get('road_id')) if address.get('road_id') else None
         
-        # Extract image paths from raw event
-        raw_image_path = escape_sql_string(raw_event.get('raw_image_path')) if raw_event.get('raw_image_path') else None
-        bev_image_path = escape_sql_string(raw_event.get('bev_image_path')) if raw_event.get('bev_image_path') else None
+        # Extract image object key from raw event
+        raw_image_object_key = escape_sql_string(raw_event.get('raw_image_object_key')) if raw_event.get('raw_image_object_key') else None
         
         if is_new:
             # INSERT new pothole
@@ -813,8 +808,7 @@ class FinalEnrichmentService:
                     severity_score,
                     severity_level,
                     pothole_polygon,
-                    raw_image_path,
-                    bev_image_path,
+                    raw_image_object_key,
                     status,
                     last_updated_at,
                     observation_count
@@ -835,8 +829,7 @@ class FinalEnrichmentService:
                     {severity_event['severity_score']},
                     '{severity_event['severity_level']}',
                     '{pothole_polygon}',
-                    {f"'{raw_image_path}'" if raw_image_path else 'NULL'},
-                    {f"'{bev_image_path}'" if bev_image_path else 'NULL'},
+                    {f"'{raw_image_object_key}'" if raw_image_object_key else 'NULL'},
                     'reported',
                     TIMESTAMP '{calculated_at}',
                     1
@@ -851,7 +844,7 @@ class FinalEnrichmentService:
                 print(f"[ERROR] Failed to insert pothole: {e}")
         
         else:
-            # UPDATE existing pothole - always use latest detection's image paths
+            # UPDATE existing pothole - always use latest detection's image object key
             query = f"""
                 UPDATE iceberg.city.potholes
                 SET 
@@ -860,8 +853,7 @@ class FinalEnrichmentService:
                     severity_score = {severity_event['severity_score']},
                     severity_level = '{severity_event['severity_level']}',
                     pothole_polygon = '{pothole_polygon}',
-                    raw_image_path = {f"'{raw_image_path}'" if raw_image_path else 'raw_image_path'},
-                    bev_image_path = {f"'{bev_image_path}'" if bev_image_path else 'bev_image_path'},
+                    raw_image_object_key = {f"'{raw_image_object_key}'" if raw_image_object_key else 'raw_image_object_key'},
                     last_updated_at = TIMESTAMP '{calculated_at}',
                     observation_count = observation_count + 1
                 WHERE pothole_id = '{pothole_id}'
