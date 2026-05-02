@@ -1,0 +1,30 @@
+{
+  "artifact_name": "yolo11s-2026-05-01.pt",
+  "artifact_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "artifact_size_bytes": 20513309,
+  "artifact_uri": "",
+  "benchmark_summary_path": "summary.json",
+  "benchmark_summary_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "benchmark_summary_size_bytes": 12345,
+  "confidence_threshold": 0.1,
+  "created_at_utc": "2026-05-01T00:00:00+00:00",
+  "description": "Candidate YOLO segmentation model for edge deployment.",
+  "input_size": 640,
+  "metadata": {
+    "training_run": "kaggle-run-id"
+  },
+  "min_edge_version": "0.1.0",
+  "model_id": "yolo11s-2026-05-01",
+  "model_type": "yolo",
+  "schema_version": 1,
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "edge-model-release-v1",
+    "value": "base64-ed25519-signature"
+  },
+  "tags": [
+    "segmentation",
+    "candidate"
+  ],
+  "training_dataset": "pothole-v3"
+}

@@ -1,0 +1,73 @@
+{
+  "active_deployment_id": "bootstrap-20260501T000000Z-yolo11s",
+  "active_model_id": "yolo11s-local",
+  "created_at_utc": "2026-05-01T00:00:00+00:00",
+  "deployment_history": [
+    {
+      "action": "bootstrap",
+      "artifact_path": "models/yolo11s.pt",
+      "artifact_sha256": "41db356f3fc78e34596cd975ea360c9679813f7a41add0acbf3f1ac1548ce12b",
+      "artifact_size_bytes": 20513309,
+      "confidence_threshold": 0.1,
+      "created_at_utc": "2026-05-01T00:00:00+00:00",
+      "deployment_id": "bootstrap-20260501T000000Z-yolo11s",
+      "model_id": "yolo11s-local",
+      "model_type": "yolo",
+      "operator": "",
+      "previous_model_id": null,
+      "reason": "Initial registry bootstrap.",
+      "rollback_of_deployment_id": "",
+      "source": "seed",
+      "status": "active"
+    }
+  ],
+  "models": {
+    "rfdetr-local": {
+      "artifact_path": "models/rfdetr.pth",
+      "artifact_sha256": "578673aa596a2ab8db96bf88c2c429d0d0b5d79251a3d07138db609d1ce4af9b",
+      "artifact_size_bytes": 135557994,
+      "benchmark_run_id": "",
+      "benchmark_summary_path": "",
+      "confidence_threshold": 0.25,
+      "created_at_utc": "2026-05-01T00:00:00+00:00",
+      "description": "Local RF-DETR segmentation checkpoint configured for edge experiments.",
+      "input_size": null,
+      "metadata": {},
+      "model_id": "rfdetr-local",
+      "model_type": "rfdetr",
+      "name": "RF-DETR local checkpoint",
+      "status": "registered",
+      "tags": [
+        "local",
+        "segmentation"
+      ],
+      "training_dataset": "",
+      "updated_at_utc": "2026-05-01T00:00:00+00:00"
+    },
+    "yolo11s-local": {
+      "artifact_path": "models/yolo11s.pt",
+      "artifact_sha256": "41db356f3fc78e34596cd975ea360c9679813f7a41add0acbf3f1ac1548ce12b",
+      "artifact_size_bytes": 20513309,
+      "benchmark_run_id": "",
+      "benchmark_summary_path": "",
+      "confidence_threshold": 0.1,
+      "created_at_utc": "2026-05-01T00:00:00+00:00",
+      "description": "Default local YOLO segmentation model used by the edge pipeline.",
+      "input_size": 640,
+      "metadata": {},
+      "model_id": "yolo11s-local",
+      "model_type": "yolo",
+      "name": "YOLO11s local segmentation",
+      "status": "active",
+      "tags": [
+        "local",
+        "segmentation",
+        "default"
+      ],
+      "training_dataset": "",
+      "updated_at_utc": "2026-05-01T00:00:00+00:00"
+    }
+  },
+  "schema_version": 1,
+  "updated_at_utc": "2026-05-01T00:00:00+00:00"
+}
