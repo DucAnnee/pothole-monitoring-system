@@ -79,7 +79,6 @@ class ConfigLoader:
         """Validate required configuration fields"""
         required_fields = [
             "kafka",
-            "aggregation",
             "severity",
         ]
 
@@ -93,18 +92,11 @@ class ConfigLoader:
             "schema_registry_url",
             "consumer_group_id",
             "depth_topic",
-            "raw_events_topic",
             "output_topic",
         ]
         for field in kafka_fields:
             if field not in self.config["kafka"]:
                 raise ValueError(f"Missing required Kafka configuration: {field}")
-
-        # Validate aggregation config
-        aggregation_fields = ["timeout_seconds", "cleanup_interval_seconds"]
-        for field in aggregation_fields:
-            if field not in self.config["aggregation"]:
-                raise ValueError(f"Missing required aggregation configuration: {field}")
 
         # Validate severity config
         severity_fields = ["area_weight", "depth_weight", "min_score", "max_score"]
@@ -130,20 +122,8 @@ class ConfigLoader:
         return self.config["kafka"]["depth_topic"]
 
     @property
-    def raw_events_topic(self) -> str:
-        return self.config["kafka"]["raw_events_topic"]
-
-    @property
     def output_topic(self) -> str:
         return self.config["kafka"]["output_topic"]
-
-    @property
-    def aggregation_timeout_seconds(self) -> int:
-        return self.config["aggregation"]["timeout_seconds"]
-
-    @property
-    def cleanup_interval_seconds(self) -> int:
-        return self.config["aggregation"]["cleanup_interval_seconds"]
 
     @property
     def area_weight(self) -> float:
