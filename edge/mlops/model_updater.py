@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse
 from urllib.request import url2pathname, urlopen
 
 from .artifacts import file_size, sha256_file
-from .manifest_signature import verify_manifest_signature
+from .manifest_signature import verify_manifest_signature, SignatureError
 from .model_manifest import ManifestError, validate_manifest, write_manifest
 from .model_registry import ModelRegistry, RegistryError
 
