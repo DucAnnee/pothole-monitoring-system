@@ -28,17 +28,17 @@ RAW_EVENT_SCHEMA_STR = """
 {
   "type": "record",
   "name": "RawEvent",
-  "namespace": "pothole.raw.v1",
+  "namespace": "pothole.raw.v2",
   "fields": [
     {"name": "event_id", "type": "string"},
     {"name": "vehicle_id", "type": "string"},
     {"name": "timestamp", "type": {"type": "long", "logicalType": "timestamp-millis"}},
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
-    {"name": "gps_acc", "type": ["null", "double"], "default": null},
-    {"name": "image_path", "type": "string"},
-    {"name": "mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
-    {"name": "confidence", "type": ["null", "double"], "default": null}
+    {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
+    {"name": "raw_image_object_key", "type": "string"},
+    {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
+    {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
 """
@@ -231,10 +231,10 @@ class Uploader:
                 "timestamp": timestamp_ms,
                 "gps_lat": gps_lat,
                 "gps_lon": gps_lon,
-                "gps_acc": random.uniform(5.0, 15.0),
-                "image_path": raw_s3_path,
-                "mask": bundled.coordinates,
-                "confidence": bundled.conf,
+                "gps_accuracy": random.uniform(5.0, 15.0),
+                "raw_image_object_key": raw_s3_path,
+                "original_mask": bundled.coordinates,
+                "detection_confidence": bundled.conf,
             }
 
             # Serialize and produce to Kafka
