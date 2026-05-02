@@ -72,9 +72,9 @@ class Uploader:
         self.metadata_dir.mkdir(exist_ok=True)
 
         # cloud connection status
-        self.minio_client: Optional[Minio]
-        self.kafka_producer: Optional[Producer]
-        self.avro_serializer: Optional[AvroSerializer]
+        self.minio_client: Optional[Minio] = None
+        self.kafka_producer: Optional[Producer] = None
+        self.avro_serializer: Optional[AvroSerializer] = None
         self.is_online = False
 
         # stats
@@ -83,8 +83,13 @@ class Uploader:
         # connections init
         self._initialize_connections()
 
-    def _initialize_connections(self):
+    def _initialize_connections(self) -> None:
         """Initialize MinIO and Kafka connections"""
+        self.minio_client = None
+        self.kafka_producer = None
+        self.avro_serializer = None
+        self.is_online = False
+
         try:
             # connect to MinIO
             self.minio_client = self._connect_minio()
@@ -245,16 +250,36 @@ class Uploader:
                 SerializationContext(topic, MessageField.VALUE),
             )
 
+            delivery_errors = []
+
+            def delivery_report(err, msg):
+                if err is not None:
+                    delivery_errors.append(str(err))
+                self._delivery_report(err, msg)
+
             self.kafka_producer.produce(  # type: ignore
                 topic=topic,
                 key=self.vehicle_id,
                 value=serialized_value,
-                on_delivery=self._delivery_report,
+                on_delivery=delivery_report,
             )
 
-            self.kafka_producer.poll(0)  # type: ignore
+            timeout = float(self.config.config["kafka"].get("delivery_timeout", 10))
+            pending = self.kafka_producer.flush(timeout)  # type: ignore
+            if pending > 0:
+                print(
+                    f"[ERROR] Kafka delivery timed out for {bundled.event_id}; "
+                    f"{pending} message(s) still pending"
+                )
+                return False
+            if delivery_errors:
+                print(
+                    f"[ERROR] Kafka delivery failed for {bundled.event_id}: "
+                    f"{'; '.join(delivery_errors)}"
+                )
+                return False
 
-            print(f"[UPLOAD] Event {bundled.event_id} queued")
+            print(f"[UPLOAD] Event {bundled.event_id} delivered")
             return True
 
         except Exception as e:
