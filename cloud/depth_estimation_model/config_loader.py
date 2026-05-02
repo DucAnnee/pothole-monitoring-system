@@ -207,15 +207,6 @@ class ConfigLoader:
         """Get maximum confidence"""
         return self.config["processing"].get("confidence_max", 0.98)
 
-    def get_use_bev_image(self) -> bool:
-        """Check if BEV image should be used"""
-        return self.config["processing"].get("use_bev_image", True)
-
-    def get_fallback_to_regular_image(self) -> bool:
-        # TODO generate bev_image from original_image + homography
-        """Check if fallback to regular image is enabled"""
-        return self.config["processing"].get("fallback_to_regular_image", True)
-
     # ========================================================================
     # Convenience getters for logging configuration
     # ========================================================================
