@@ -10,10 +10,16 @@ import threading
 import numpy as np
 from uuid import uuid4
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Mapping
 
 from uploader import Uploader
-from config_loader import load_config
-from data_models import DetectionData, DetectionMask
+from config_loader import ConfigLoader, load_config
+from data_models import DetectionData, DetectionMask, ModelType, RuntimeModel
+from mlops.model_manifest import ManifestError
+from mlops.model_registry import ModelRegistry, RegistryError
+from mlops.model_updater import UpdateError, deploy_from_manifest
+from mlops.manifest_signature import SignatureError
 from segmentation import PotholeSegmenter
 
 
@@ -23,16 +29,25 @@ from segmentation import PotholeSegmenter
 class EdgePipeline:
     """Main Edge pipeline orchestrator."""
 
-    def __init__(self, config_path="config.yaml", video_path=None):
+    def __init__(self, config_path: str = "config.yaml", video_path: str | None = None):
         """
         Initialize the edge pipeline.
 
         Args:
             config_path: Path to configuration file
+            video_path: Optional video path. When omitted, the camera is used.
         """
-        self.config = load_config(config_path)
-        self.video_path = video_path
+        self.config: ConfigLoader = load_config(config_path)
+        self.video_path: str | None = video_path
         self.vehicle_id = f"vehicle-{uuid4().hex[:8]}"
+        self._sync_latest_stable_model()
+        self.runtime_model: RuntimeModel = self._resolve_runtime_model()
+
+        # control flags
+        self.running = False
+        self.threads = []
+        self._stop_lock = threading.Lock()
+        self._stopped = False
 
         # in-memory queue
         self.detection_queue = queue.Queue(maxsize=100)
@@ -41,36 +56,181 @@ class EdgePipeline:
         self.segmenter = self._initialize_segmenter()
         self.uploader = Uploader(self.config, self.vehicle_id)
 
-        # control flags
-        self.running = False
-        self.threads = []
-
         # signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
-    def _initialize_segmenter(self):
-        """Initialize the segmentation model."""
-        model_type = self.config.get_model_type()
+    def _initialize_segmenter(self) -> PotholeSegmenter:
+        """Initialize the segmenter from the resolved runtime model."""
         self.normalized_trapezoid = self.config.get_trapezoid_coords().astype(float)
-        self.confidence_threshold = self.config.get_confidence_threshold()
+        self.confidence_threshold = self.runtime_model.confidence_threshold
         print("[INFO] Initializing segmentation model...")
+        print(
+            "[INFO] Runtime model: "
+            f"{self.runtime_model.model_id} "
+            f"({self.runtime_model.model_type})"
+        )
+        print(f"[INFO] Model source: {self.runtime_model.source}")
 
         return PotholeSegmenter.create(
-            model_type=model_type,
-            model_path=self.config.get_model_path(),
+            model_type=self.runtime_model.model_type,
+            model_path=self.runtime_model.model_path,
             trapezoid_coords=self.config.get_trapezoid_coords(),
-            confidence_threshold=self.config.get_confidence_threshold(),
+            confidence_threshold=self.runtime_model.confidence_threshold,
         )
 
-    def _signal_handler(self, signum, frame):
+    # ========================================================================
+    # Startup model lifecycle
+    # ========================================================================
+    def _sync_latest_stable_model(self) -> None:
+        """Fetch, verify, and deploy the configured stable model manifest.
+
+        When `fail_on_error` is false, update failures are logged and startup
+        continues with the current registry model or static config fallback.
+        """
+        update_config = self.config.get_model_update_config()
+        if not update_config.get("enabled", False):
+            return
+
+        manifest_uri = str(update_config.get("stable_manifest_uri") or "").strip()
+        if not manifest_uri:
+            message = (
+                "mlops.model_update.enabled is true but stable_manifest_uri is empty"
+            )
+            if update_config.get("fail_on_error", False):
+                raise RuntimeError(message)
+            print(f"[WARN] {message}; skipping startup model update.")
+            return
+
+        print("[INFO] Checking latest stable model manifest...")
+        try:
+            deploy_kwargs: dict[str, Any] = {
+                "manifest_uri": manifest_uri,
+                "staging_dir": update_config.get("staging_dir", "models/staging"),
+                "artifacts_dir": update_config.get("artifacts_dir", "models/artifacts"),
+                "registry_path": self._registry_path(),
+                "reason": update_config.get("reason", "Startup stable model update"),
+                "operator": update_config.get("operator", "edge-startup"),
+                "timeout_seconds": float(update_config.get("timeout_seconds", 30.0)),
+                **self._manifest_signature_options(update_config),
+            }
+            deploy_kwargs["candidate_validator"] = self._smoke_load_candidate_model
+            result = deploy_from_manifest(**deploy_kwargs)
+        except (ManifestError, OSError, RegistryError, UpdateError, Exception) as exc:
+            message = f"Startup model update failed: {exc}"
+            if update_config.get("fail_on_error", False):
+                raise RuntimeError(message) from exc
+            print(f"[WARN] {message}. Continuing with local registry/config model.")
+            return
+
+        if result.get("action") == "already_active":
+            print(f"[INFO] Stable model already active: {result.get('model_id')}")
+            return
+
+        deployment = result.get("deployment", {})
+        print(f"[INFO] Deployed stable model: {deployment.get('model_id', 'unknown')}")
+
+    def _resolve_runtime_model(self) -> RuntimeModel:
+        """Resolve the model settings that the segmenter should load.
+
+        The registry is preferred when enabled because it carries verified
+        artifact metadata. If the registry is unavailable and fallback is
+        allowed, the static `models` section in `config.yaml` is used.
+        """
+        registry_config = self.config.get_model_registry_config()
+        if not registry_config.get("enabled", False):
+            return self._config_runtime_model()
+
+        registry_path = self._registry_path()
+        try:
+            registry = ModelRegistry(registry_path)
+            active_model = registry.validate_model(registry.get_active_model())
+        except (OSError, RegistryError) as exc:
+            if not registry_config.get("fallback_to_config", True):
+                raise RuntimeError(f"Model registry is not usable: {exc}") from exc
+            print(f"[WARN] Model registry unavailable: {exc}. Falling back to config.")
+            return self._config_runtime_model()
+
+        return self._registry_runtime_model(active_model, registry_path)
+
+    def _smoke_load_candidate_model(
+        self,
+        manifest: Mapping[str, Any],
+        artifact_path: Path,
+    ) -> None:
+        """Load a candidate model before it is allowed to become active."""
+        model_type = self._parse_model_type(manifest.get("model_type"))
+        print(f"[INFO] Smoke-loading candidate model: {manifest['model_id']}")
+        segmenter = PotholeSegmenter.create(
+            model_type=model_type,
+            model_path=str(artifact_path),
+            trapezoid_coords=self.config.get_trapezoid_coords(),
+            confidence_threshold=float(manifest["confidence_threshold"]),
+            frame_interval=self.config.get_frame_interval(),
+        )
+        try:
+            print(f"[INFO] Candidate model loaded successfully: {manifest['model_id']}")
+        finally:
+            segmenter.cleanup()
+
+    def _registry_runtime_model(
+        self,
+        active_model: Mapping[str, Any],
+        registry_path: str,
+    ) -> RuntimeModel:
+        """Adapt a validated registry model record to the runtime contract."""
+        model_type = self._parse_model_type(active_model.get("model_type"))
+        return RuntimeModel(
+            model_id=str(active_model["model_id"]),
+            model_type=model_type,
+            model_path=str(active_model["artifact_path"]),
+            confidence_threshold=float(active_model["confidence_threshold"]),
+            source=f"registry:{registry_path}",
+        )
+
+    def _config_runtime_model(self) -> RuntimeModel:
+        """Build runtime model settings from the static config fallback."""
+        model_type = self.config.get_model_type()
+        return RuntimeModel(
+            model_id=f"{model_type}-config",
+            model_type=model_type,
+            model_path=self.config.get_model_path(),
+            confidence_threshold=self.config.get_confidence_threshold(),
+            source="config.yaml",
+        )
+
+    def _parse_model_type(self, model_type: Any) -> ModelType:
+        """Validate a dynamic model type before assigning the typed contract."""
+        if model_type not in ("yolo", "rfdetr"):
+            raise RuntimeError(f"Unsupported runtime model_type: {model_type}")
+        return model_type
+
+    def _registry_path(self) -> str:
+        """Return the configured model registry path."""
+        registry_config = self.config.get_model_registry_config()
+        return str(registry_config.get("registry_path", "mlops/model_registry.json"))
+
+    def _manifest_signature_options(
+        self,
+        update_config: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Return manifest signature verification options for startup updates."""
+        signature_config = update_config.get("manifest_signature", {})
+        return {
+            "signature_public_key_path": signature_config.get("public_key_path"),
+            "expected_signature_key_id": signature_config.get("key_id", ""),
+            "require_signature": bool(signature_config.get("required", False)),
+        }
+
+    def _signal_handler(self, signum: int, frame: Any) -> None:
         """Handle shutdown signals."""
         print("\n[INFO] Shutdown signal received. Stopping pipeline...")
         self.stop()
 
-    def inference_worker(self):
+    def inference_worker(self) -> None:
         """Inference worker thread - processes video and produces detections."""
         print("[INFO] Inference worker started")
+        cap = None
 
         try:
             import cv2
@@ -78,22 +238,25 @@ class EdgePipeline:
             if self.video_path:
                 print("[INFO] Video path provided, running inference on video file")
                 cap = cv2.VideoCapture(self.video_path)
+                source = f"video: {self.video_path}"
             else:
                 print("[INFO] Running inference on camera (Device 0)")
                 # TODO: allow camera selection from config & poll available cameras
                 cap = cv2.VideoCapture(0)
+                source = "camera device 0"
 
             if not cap.isOpened():
-                print(f"[ERROR] Could not open video: {self.video_path}")
+                print(f"[ERROR] Could not open input source: {source}")
+                self.running = False
                 return
 
             frame_count = 0
             frame_interval = self.config.get_frame_interval()
 
             # monitor window init
-            enable_monitoring = self.config.get_enable_monitoring()
+            enable_monitoring = self.config.get_display_enabled()
             if enable_monitoring:
-                window_name = "Pothole Segmentation"
+                window_name = self.config.get_display_window_name()
                 cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
                 cv2.resizeWindow(window_name, 1280, 720)
 
@@ -169,19 +332,27 @@ class EdgePipeline:
                 if enable_monitoring:
                     cv2.imshow(window_name, display_frame)  # type: ignore
 
-                # check for quit key
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord("q"):
-                    print("\n[INFO] 'q' pressed, stopping inference...")
-                    self.stop()
-
-            cap.release()
-            cv2.destroyAllWindows()
+                    # check for quit key
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q"):
+                        print("\n[INFO] 'q' pressed, stopping inference...")
+                        self.running = False
+                        break
 
         except Exception as e:
             print(f"[ERROR] Inference worker failed: {e}")
+            self.running = False
+        finally:
+            if cap is not None:
+                cap.release()
+            try:
+                import cv2
 
-    def uploading_worker(self):
+                cv2.destroyAllWindows()
+            except Exception:
+                pass
+
+    def uploading_worker(self) -> None:
         """Uploading worker thread."""
         print("[INFO] Uploading worker started")
 
@@ -229,21 +400,34 @@ class EdgePipeline:
             except Exception as e:
                 print(f"[ERROR] Uploading worker failed: {e}")
 
-    def start(self):
+    def start(self) -> None:
         """Start the pipeline."""
         print("=" * 70)
         print("EDGE DEVICE WORKER")
         print("=" * 70)
         print(f"Vehicle ID: {self.vehicle_id}")
-        print(f"Model: {self.config.get_model_type().upper()}")
+        print(
+            "Model: "
+            f"{self.runtime_model.model_type.upper()} "
+            f"({self.runtime_model.model_id})"
+        )
+        print(f"Model Path: {self.runtime_model.model_path}")
         print(f"Online: {self.uploader.is_online}")
         print("=" * 70)
 
         self.running = True
 
         # start worker threads
-        inference_thread = threading.Thread(target=self.inference_worker, daemon=True)
-        uploading_thread = threading.Thread(target=self.uploading_worker, daemon=True)
+        inference_thread = threading.Thread(
+            target=self.inference_worker,
+            name="inference-worker",
+            daemon=True,
+        )
+        uploading_thread = threading.Thread(
+            target=self.uploading_worker,
+            name="uploading-worker",
+            daemon=True,
+        )
         inference_thread.start()
         uploading_thread.start()
 
@@ -262,29 +446,50 @@ class EdgePipeline:
                     print(f"Queue depth: {self.detection_queue.qsize()}")
 
         except KeyboardInterrupt:
-            pass
+            self.running = False
+        finally:
+            self.stop()
 
-    def stop(self):
-        """Stop the edge worker"""
-        self.running = False
+    def stop(self) -> None:
+        """Stop workers, flush pending uploads, and release model resources."""
+        with self._stop_lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            self.running = False
 
-        # wait for threads to finish
-        for thread in self.threads:
-            thread.join(timeout=5.0)
+            # wait for threads to finish, but never join the caller thread
+            current_thread = threading.current_thread()
+            for thread in self.threads:
+                if thread is current_thread:
+                    continue
+                thread.join(timeout=5.0)
 
-        # flush Kafka producer
-        self.uploader.flush()
+            alive_threads = [
+                thread.name
+                for thread in self.threads
+                if thread is not current_thread and thread.is_alive()
+            ]
+            if alive_threads:
+                print(
+                    "[WARN] Worker thread(s) still running after shutdown timeout: "
+                    f"{', '.join(alive_threads)}"
+                )
 
-        # print final stats
-        self.uploader.print_stats()
+            # flush Kafka producer
+            self.uploader.flush()
 
-        # delete model resources
-        self.segmenter.cleanup()
+            # print final stats
+            self.uploader.print_stats()
 
-        print("[INFO] Pipeline stopped")
+            # delete model resources once workers are no longer using them
+            if not alive_threads:
+                self.segmenter.cleanup()
+
+            print("[INFO] Pipeline stopped")
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     import argparse
 
@@ -298,9 +503,9 @@ def main():
     parser.add_argument(
         "--video",
         type=str,
-        default="./assets/test.mp4",
-        help="Path to input video file to run test on (default: ./assets/test.mp4)",
+        help="Optional input video path. Omit this flag to use camera device 0.",
     )
+
     args = parser.parse_args()
 
     pipeline = EdgePipeline(config_path=args.config, video_path=args.video)

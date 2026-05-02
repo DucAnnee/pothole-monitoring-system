@@ -62,7 +62,6 @@ class ConfigLoader:
         """Validate required configuration fields"""
         required_fields = [
             "model_type",
-            "video",
             "models",
             "detection_region",
             "bev_calibration",
@@ -85,8 +84,12 @@ class ConfigLoader:
     # Convenience getters for accessing configuration values
     # ========================================================================
     def get_enable_monitoring(self) -> bool:
-        """Check if monitoring is enabled"""
-        return self.config.get("enable_monitoring", False)
+        """Check if monitoring is enabled.
+
+        Kept as a compatibility alias for older configs that used the
+        top-level `enable_monitoring` field.
+        """
+        return self.config.get("enable_monitoring", self.get_display_enabled())
 
     def get_model_type(self) -> Literal["yolo", "rfdetr"]:
         """Get selected model type"""
@@ -149,6 +152,23 @@ class ConfigLoader:
         """Get display window name"""
         return self.config["processing"].get("display_window_name", "Pothole Detection")
 
+    def get_video_path(self) -> str | None:
+        """Get optional default video path for local runs."""
+        video_config = self.config.get("video", {})
+        return video_config.get("path")
+
+    def get_mlops_config(self) -> dict:
+        """Get MLOps model lifecycle configuration."""
+        return self.config.get("mlops", {})
+
+    def get_model_registry_config(self) -> dict:
+        """Get local model registry configuration."""
+        return self.get_mlops_config().get("model_registry", {})
+
+    def get_model_update_config(self) -> dict:
+        """Get startup stable model update configuration."""
+        return self.get_mlops_config().get("model_update", {})
+
     def get_api_config(self):
         """Get API configuration (if available)"""
         return self.config.get("api", None)
@@ -196,7 +216,8 @@ class ConfigLoader:
         print("=" * 70)
         print(f"Model Type: {self.get_model_type().upper()}")
         print(f"Model Path: {self.get_model_path()}")
-        print(f"Video Path: {self.get_video_path()}")
+        video_path = self.get_video_path() or "camera device 0"
+        print(f"Default Input: {video_path}")
         print(f"Confidence Threshold: {self.get_confidence_threshold()}")
         print(f"Frame Interval: {self.get_frame_interval()}")
         print(f"Calibration File: {self.get_calibration_path()}")

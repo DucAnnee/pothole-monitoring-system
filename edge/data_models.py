@@ -4,8 +4,32 @@ Shared data models for the edge device pipeline.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List
+from typing import List, Literal
 import numpy as np
+
+ModelType = Literal["yolo", "rfdetr"]
+
+
+@dataclass(frozen=True)
+class RuntimeModel:
+    """Resolved model settings used by the live inference pipeline.
+
+    This is the shared contract between config fallback, registry resolution,
+    startup model updates, and segmenter initialization.
+
+    Attributes:
+        model_id: Stable id from the registry, or a config-derived fallback id.
+        model_type: Segmenter implementation to instantiate.
+        model_path: Local artifact path passed to the segmenter.
+        confidence_threshold: Detection threshold paired with this model.
+        source: Human-readable source for logs and startup diagnostics.
+    """
+
+    model_id: str
+    model_type: ModelType
+    model_path: str
+    confidence_threshold: float
+    source: str
 
 
 @dataclass

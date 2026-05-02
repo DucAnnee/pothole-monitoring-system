@@ -6,9 +6,6 @@
 # Model selection: "yolo" | "rfdetr"
 model_type: "yolo"
 
-# Monitor window toggle
-enable_monitoring: true
-
 # Models settings
 models: 
   yolo:
@@ -17,6 +14,28 @@ models:
   rfdetr:
     weights_path: "models/rfdetr.pth"
     confidence_threshold: 0.25
+
+# MLOps model lifecycle.
+# On startup, main.py can fetch the latest stable manifest, verify the artifact,
+# deploy it into the local registry, and load the active registered model.
+mlops:
+  model_registry:
+    enabled: true
+    registry_path: "mlops/model_registry.json"
+    fallback_to_config: true
+  model_update:
+    enabled: true
+    stable_manifest_uri: "${STABLE_MODEL_MANIFEST_URI:https://github.com/DucAnnee/pothole-monitoring-system/releases/latest/download/manifest.json}"
+    manifest_signature:
+      required: true
+      public_key_path: ".conf/model_manifest_public_key.pub"
+      key_id: "edge-model-release-v1"
+    staging_dir: "models/staging"
+    artifacts_dir: "models/artifacts"
+    timeout_seconds: 30
+    fail_on_error: false
+    operator: "edge-startup"
+    reason: "Startup stable model update"
 
 # Detection region mask
 detection_region:
@@ -58,6 +77,7 @@ kafka:
   topic: "pothole.raw.events.v1"
   bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
   schema_registry_url: "http://localhost:8082"
+  delivery_timeout: 10
   max_retries: 5
   retry_delay: 2
 
