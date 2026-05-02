@@ -406,6 +406,7 @@ function ImageCard({ title, s3Path, onClick }: ImageCardProps) {
 
 export function PotholeDetailsPanel({ pothole, onClose }: PotholeDetailsPanelProps) {
   const colors = SEVERITY_COLORS[pothole.severity_level] || SEVERITY_COLORS.MINOR;
+  const img_placeholder = ''; 
   
   // Lightbox state
   const [lightboxOpen, setLightboxOpen] = useState(false);
