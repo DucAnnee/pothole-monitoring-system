@@ -58,6 +58,7 @@ class EdgePipeline:
         self.video_path: str | None = (
             video_path if video_path is not None else self.config.get_video_path()
         )
+        # TODO - consider more robust vehicle ID
         self.vehicle_id = f"vehicle-{uuid4().hex[:8]}"
         log_event(
             self.logger,
@@ -70,6 +71,8 @@ class EdgePipeline:
                 else terminal_output
             ),
         )
+
+        # startup model lifecycle
         self._sync_latest_stable_model()
         self.runtime_model: RuntimeModel = self._resolve_runtime_model()
 
@@ -84,7 +87,9 @@ class EdgePipeline:
 
         # modules init
         self.segmenter = self._initialize_segmenter()
-        self.deduplicator: DetectionDeduplicator | None = self._initialize_deduplicator()
+        self.deduplicator: DetectionDeduplicator | None = (
+            self._initialize_deduplicator()
+        )
         self.uploader = Uploader(self.config, self.vehicle_id)
 
         # signal handlers for graceful shutdown
@@ -95,6 +100,7 @@ class EdgePipeline:
         """Initialize the segmenter from the resolved runtime model."""
         self.normalized_trapezoid = self.config.get_trapezoid_coords().astype(float)
         self.confidence_threshold = self.runtime_model.confidence_threshold
+
         log_event(
             self.logger,
             "model_loading_start",
@@ -110,6 +116,7 @@ class EdgePipeline:
             trapezoid_coords=self.config.get_trapezoid_coords(),
             confidence_threshold=self.runtime_model.confidence_threshold,
         )
+
         log_event(
             self.logger,
             "model_loading_complete",
@@ -148,6 +155,7 @@ class EdgePipeline:
         if not update_config.get("enabled", False):
             return
 
+        # get stable manifest URI from config, currently default to latest release
         manifest_uri = str(update_config.get("stable_manifest_uri") or "").strip()
         if not manifest_uri:
             message = (
@@ -331,6 +339,7 @@ class EdgePipeline:
         try:
             import cv2
 
+            # resolve camrea or
             if self.video_path:
                 cap = cv2.VideoCapture(self.video_path)
                 source = f"video: {self.video_path}"
@@ -356,7 +365,9 @@ class EdgePipeline:
                 cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
                 cv2.resizeWindow(window_name, 1280, 720)
 
+            # main capture and inference loop
             while self.running and cap.isOpened():
+                # capture frame
                 ret, frame = cap.read()
 
                 if not ret:
@@ -365,7 +376,6 @@ class EdgePipeline:
                     break
 
                 frame_count += 1
-
                 # sample frames based on interval
                 if frame_count % frame_interval != 0:
                     continue
@@ -401,6 +411,7 @@ class EdgePipeline:
                         )
                         roi_detections.append(detection)
 
+                # deduplicate detections based on IoU and temporal age
                 if self.deduplicator:
                     accepted_detections = self.deduplicator.deduplicate(
                         frame_index=frame_count,
@@ -418,6 +429,7 @@ class EdgePipeline:
                 else:
                     accepted_detections = roi_detections
 
+                # construct the masks
                 masks = [
                     DetectionMask(
                         conf=float(detection.confidence),
@@ -532,7 +544,7 @@ class EdgePipeline:
             finally:
                 if "detection" in locals():
                     self.detection_queue.task_done()
-                    del detection
+                    del detection  # free memory
 
     def start(self) -> None:
         """Start the pipeline."""

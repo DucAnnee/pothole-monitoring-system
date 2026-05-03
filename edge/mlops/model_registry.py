@@ -352,6 +352,7 @@ class ModelRegistry:
         return payload
 
     def _load_payload(self, missing_ok: bool = False) -> Dict[str, Any]:
+        """Load the registry payload from disk, returning an empty payload if missing_ok is True."""
         if not self.registry_path.exists():
             if missing_ok:
                 return self._empty_payload()
