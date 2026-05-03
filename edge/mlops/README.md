@@ -93,7 +93,7 @@ python -m mlops.generate_manifest \
   --artifact-path models/staging/yolo11s-2026-05-01.pt \
   --confidence-threshold 0.1 \
   --input-size 640 \
-  --training-dataset pothole-v3 \
+  --training-dataset rdd202-seg \
   --signing-key .secrets/model_manifest_private_key.pem \
   --signature-key-id edge-model-release-v1 \
   --package-dir mlops/dist/yolo11s-2026-05-01

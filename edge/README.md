@@ -91,7 +91,7 @@ segmenter = PotholeSegmenter.create(
 
 **YOLOSegmenter:**
 - Uses Ultralytics YOLO segmentation models
-- Returns masks as contour coordinates (N, 2)
+- Returns model outputs with contour mask, confidence, and bounding box
 - Dependency: `ultralytics`
 
 **RFDETRSegmenter:**
@@ -100,9 +100,10 @@ segmenter = PotholeSegmenter.create(
 - Dependency: `rfdetr`
 
 **Key Methods:**
-- `segment(frame_rgb)`: Returns list of (mask_coords, confidence) tuples
+- `segment(frame_rgb)`: Returns `SegmentedPothole` items with mask, confidence, and model-provided bbox
 - `create_masked_image(frame_rgb)`: Applies trapezoid ROI masking
 - `pothole_in_trapezoid(mask, frame_shape)`: Filters detections outside ROI
+- `DetectionDeduplicator.deduplicate(...)`: Suppresses recent duplicate boxes with IoU matching
 
 ### Uploader Module
 
@@ -242,6 +243,19 @@ processing:
   enable_display: true
   display_window_name: "Pothole Segmentation"
 
+# Pipeline event logging
+logging:
+  level: "INFO"
+  file_enabled: true
+  file_path: "logs/edge_pipeline.log"
+  terminal_output: true
+
+# Deduplication
+deduplication:
+  enabled: true
+  iou_threshold: 0.5
+  max_age_frames: 15
+
 # Detection region (normalized coordinates 0-1)
 detection_region:
   trapezoid_coords:
@@ -293,6 +307,9 @@ python main.py --video path/to/video.mp4
 
 # Both custom
 python main.py --config custom.yaml --video test.mp4
+
+# Disable terminal logs while keeping file logs enabled
+python main.py --no-terminal-output
 ```
 
 ### Programmatic
@@ -303,7 +320,8 @@ from main import EdgePipeline
 # Initialize
 pipeline = EdgePipeline(
     config_path="config.yaml",
-    video_path="assets/test.mp4"
+    video_path="assets/test.mp4",
+    terminal_output=True,
 )
 
 # Start processing
@@ -425,7 +443,8 @@ pip install -r requirements.txt
 
 **Project Modules:**
 - `config_loader`: Configuration management with env var substitution
-- `segmentation`: Model abstraction and inference
+- `pipeline_logger`: Shared pipeline event logger
+- `segmentation`: Model abstraction, inference, and IoU deduplication
 - `uploader`: Cloud upload and offline storage
 - `data_models`: Data structures (DetectionData, BundledData, DetectionMask)
 
