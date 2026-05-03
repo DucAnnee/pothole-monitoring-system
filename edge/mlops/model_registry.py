@@ -511,17 +511,15 @@ def main() -> None:
             return
 
         if args.command == "list":
+            print(f'{" ":1} {"MODEL ID":24} {"TYPE":8} {"CONF":8} PATH')
             for model in registry.list_models():
                 marker = "*" if model.get("status") == "active" else " "
-                print(
-                    "{marker} {model_id} {model_type} {confidence} {path}".format(
-                        marker=marker,
-                        model_id=model.get("model_id", ""),
-                        model_type=model.get("model_type", ""),
-                        confidence=model.get("confidence_threshold", ""),
-                        path=model.get("artifact_path", ""),
-                    )
-                )
+                model_id = model.get("model_id", "")
+                model_type = model.get("model_type", "")
+                confidence = model.get("confidence_threshold", "")
+                path = model.get("artifact_path", "")
+
+                print(f"{marker} {model_id:<24} {model_type:<8} {confidence:<8} {path}")
             return
 
         if args.command == "show":
