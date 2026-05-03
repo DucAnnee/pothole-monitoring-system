@@ -9,7 +9,13 @@ import yaml
 class ConfigLoader:
     def __init__(self, config_path: str = None):
         if config_path is None:
-            config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+            config_path = os.environ.get(
+                "BEV_SURFACE_CONFIG",
+                os.environ.get(
+                    "POTHOLE_CONFIG_PATH",
+                    os.path.join(os.path.dirname(__file__), "config.yaml"),
+                ),
+            )
         self.config_path = config_path
         self.config: Dict[str, Any] = self._load_config()
         self._validate_config()

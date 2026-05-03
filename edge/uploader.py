@@ -245,16 +245,29 @@ class Uploader:
                 SerializationContext(topic, MessageField.VALUE),
             )
 
+            delivery_error = {"error": None}
+
+            def delivery_callback(err, msg):
+                self._delivery_report(err, msg)
+                if err is not None:
+                    delivery_error["error"] = err
+
             self.kafka_producer.produce(  # type: ignore
                 topic=topic,
                 key=self.vehicle_id,
                 value=serialized_value,
-                on_delivery=self._delivery_report,
+                on_delivery=delivery_callback,
             )
 
-            self.kafka_producer.poll(0)  # type: ignore
+            remaining = self.kafka_producer.flush(30)  # type: ignore
+            if remaining > 0:
+                print(f"[ERROR] Kafka delivery timed out for {bundled.event_id}")
+                return False
+            if delivery_error["error"] is not None:
+                print(f"[ERROR] Kafka delivery failed for {bundled.event_id}")
+                return False
 
-            print(f"[UPLOAD] Event {bundled.event_id} queued")
+            print(f"[UPLOAD] Event {bundled.event_id} delivered")
             return True
 
         except Exception as e:

@@ -687,13 +687,13 @@ class MultiBatchProcessor:
 # ============================================================================
 def main():
     print("=" * 70)
-    print("GENERALIZED KAFKA → ICEBERG ETL PIPELINE")
+    print("GENERALIZED KAFKA -> ICEBERG ETL PIPELINE")
     print("=" * 70)
     
     # Print configured mappings
     print("\n[CONFIG] Topic-Table Mappings:")
     for mapping in TOPIC_TABLE_MAPPINGS:
-        print(f"  - {mapping.kafka_topic} → iceberg.{ICEBERG_NAMESPACE}.{mapping.iceberg_table}")
+        print(f"  - {mapping.kafka_topic} -> iceberg.{ICEBERG_NAMESPACE}.{mapping.iceberg_table}")
     print()
     
     # Initialize Trino connection

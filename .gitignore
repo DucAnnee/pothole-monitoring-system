@@ -120,3 +120,8 @@ Thumbs.db
 *.orig
 tmp/
 temp/
+
+**/CLAUDE.md
+**/*.claude/
+**/*.draft.md
+/.claude

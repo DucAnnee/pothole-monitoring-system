@@ -1,5 +1,12 @@
 # Cloud Services - CLAUDE.md
 
+## Contexts
+
+Pre-researched context documents — load before working on a component:
+
+- [`cloud-context.md`](.claude/contexts/cloud-context.md) — Full per-service internals, Avro schemas, topic flow
+- [`triton-integration-plan.md`](triton_inference_server/.claude/contexts/triton-integration-plan.md) — Triton integration plan: ONNX export, model repo, docker-compose, depth service refactor (not yet implemented)
+
 ## What Lives Here
 
 Five Python microservices forming the cloud half of the pothole monitoring pipeline:

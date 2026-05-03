@@ -91,9 +91,12 @@ class EdgePipeline:
             frame_interval = self.config.get_frame_interval()
 
             # monitor window init
-            enable_monitoring = self.config.get_enable_monitoring()
+            enable_monitoring = (
+                self.config.get_enable_monitoring()
+                and self.config.get_display_enabled()
+            )
             if enable_monitoring:
-                window_name = "Pothole Segmentation"
+                window_name = self.config.get_display_window_name()
                 cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
                 cv2.resizeWindow(window_name, 1280, 720)
 
@@ -169,14 +172,16 @@ class EdgePipeline:
                 if enable_monitoring:
                     cv2.imshow(window_name, display_frame)  # type: ignore
 
-                # check for quit key
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord("q"):
-                    print("\n[INFO] 'q' pressed, stopping inference...")
-                    self.stop()
+                # check for quit key only when an OpenCV window is active
+                if enable_monitoring:
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q"):
+                        print("\n[INFO] 'q' pressed, stopping inference...")
+                        self.stop()
 
             cap.release()
-            cv2.destroyAllWindows()
+            if enable_monitoring:
+                cv2.destroyAllWindows()
 
         except Exception as e:
             print(f"[ERROR] Inference worker failed: {e}")
@@ -192,7 +197,7 @@ class EdgePipeline:
             self.uploader.flush()
 
         # process detection queue
-        while self.running:
+        while self.running or not self.detection_queue.empty():
             try:
                 # get detection from queue
                 detection = self.detection_queue.get(timeout=1.0)
@@ -222,12 +227,14 @@ class EdgePipeline:
                                 print("[INFO] Back online! Processing stored data...")
                                 self.uploader.process_local_storage()
 
-                self.detection_queue.task_done()
-
             except queue.Empty:
                 continue
             except Exception as e:
                 print(f"[ERROR] Uploading worker failed: {e}")
+            finally:
+                if "detection" in locals():
+                    self.detection_queue.task_done()
+                    del detection
 
     def start(self):
         """Start the pipeline."""
@@ -263,6 +270,8 @@ class EdgePipeline:
 
         except KeyboardInterrupt:
             pass
+        finally:
+            self.stop()
 
     def stop(self):
         """Stop the edge worker"""

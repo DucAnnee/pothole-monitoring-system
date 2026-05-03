@@ -326,6 +326,23 @@ def delivery_report(err, msg):
         print(f"[DELIVERED] {msg.topic()} [{msg.partition()}] @ {msg.offset()}")
 
 
+def produce_and_flush(producer, topic, key, value, timeout=30):
+    """Produce one message and return only after Kafka acknowledges delivery."""
+    delivery_error = {"error": None}
+
+    def callback(err, msg):
+        delivery_report(err, msg)
+        if err is not None:
+            delivery_error["error"] = err
+
+    producer.produce(topic=topic, key=key, value=value, on_delivery=callback)
+    remaining = producer.flush(timeout)
+    if remaining > 0:
+        raise TimeoutError(f"Timed out delivering message to {topic}")
+    if delivery_error["error"] is not None:
+        raise RuntimeError(f"Failed delivering message to {topic}: {delivery_error['error']}")
+
+
 # ============================================================================
 # MAIN LOOP
 # ============================================================================
@@ -335,7 +352,13 @@ def main():
     print("=" * 70)
 
     # Load configuration
-    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    config_path = os.environ.get(
+        "DEPTH_SERVICE_CONFIG",
+        os.environ.get(
+            "POTHOLE_CONFIG_PATH",
+            os.path.join(os.path.dirname(__file__), "config.yaml"),
+        ),
+    )
     config = ConfigLoader(config_path)
 
     print(f"[INFO] Configuration loaded from: {config_path}")
@@ -387,13 +410,11 @@ def main():
                 raw_key = surface_event["raw_image_object_key"]
                 surface_area_cm2 = surface_event["surface_area_cm2"]
                 bev_confidence = surface_event.get("confidence")
-                surface_area = surface_area_cm2
-                detection_conf = bev_confidence if bev_confidence is not None else 0.0
                 message_count += 1
 
                 print(f"\n[RECEIVED #{message_count}] event_id={event_id}")
                 print(
-                    f"[INFO] Surface area: {surface_area:.2f} cm², Detection confidence: {detection_conf:.4f}"
+                    f"[INFO] Surface area: {surface_area_cm2:.2f} cm², Detection confidence: {bev_confidence or 0.0:.4f}"
                 )
 
                 # Try to get BEV image first
@@ -444,14 +465,7 @@ def main():
                     SerializationContext(output_topic, MessageField.VALUE),
                 )
 
-                producer.produce(
-                    topic=output_topic,
-                    key=event_id,
-                    value=serialized_value,
-                    on_delivery=delivery_report,
-                )
-                producer.poll(0)
-                producer.flush()
+                produce_and_flush(producer, output_topic, event_id, serialized_value)
                 consumer.commit(message=msg)
 
             except Exception as e:

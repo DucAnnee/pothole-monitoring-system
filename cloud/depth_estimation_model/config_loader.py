@@ -14,13 +14,22 @@ class ConfigLoader:
     Supports environment variable substitution for sensitive data.
     """
 
-    def __init__(self, config_path="config.yaml"):
+    def __init__(self, config_path=None):
         """
         Initialize config loader.
 
         Args:
             config_path: Path to YAML configuration file
         """
+        if config_path is None:
+            config_path = os.environ.get(
+                "DEPTH_SERVICE_CONFIG",
+                os.environ.get(
+                    "POTHOLE_CONFIG_PATH",
+                    os.path.join(os.path.dirname(__file__), "config.yaml"),
+                ),
+            )
+
         self.config_path = config_path
         self.config: Dict[str, Any] = self._load_config()
         self._validate_config()

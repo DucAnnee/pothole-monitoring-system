@@ -64,12 +64,35 @@ def delivery_report(err, msg):
         print(f"[DELIVERED] {msg.topic()} [{msg.partition()}] @ {msg.offset()}")
 
 
+def produce_and_flush(producer, topic, key, value, timeout=30):
+    """Produce one message and return only after Kafka acknowledges delivery."""
+    delivery_error = {"error": None}
+
+    def callback(err, msg):
+        delivery_report(err, msg)
+        if err is not None:
+            delivery_error["error"] = err
+
+    producer.produce(topic=topic, key=key, value=value, on_delivery=callback)
+    remaining = producer.flush(timeout)
+    if remaining > 0:
+        raise TimeoutError(f"Timed out delivering message to {topic}")
+    if delivery_error["error"] is not None:
+        raise RuntimeError(f"Failed delivering message to {topic}: {delivery_error['error']}")
+
+
 def main():
     print("=" * 70)
     print("BEV SURFACE AREA SERVICE")
     print("=" * 70)
 
-    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    config_path = os.environ.get(
+        "BEV_SURFACE_CONFIG",
+        os.environ.get(
+            "POTHOLE_CONFIG_PATH",
+            os.path.join(os.path.dirname(__file__), "config.yaml"),
+        ),
+    )
     config = ConfigLoader(config_path)
 
     trapezoid = np.array(config.trapezoid_coords, dtype=np.float32)
@@ -154,13 +177,7 @@ def main():
                 }
 
                 serialized = serializer(output, SerializationContext(output_topic, MessageField.VALUE))
-                producer.produce(
-                    topic=output_topic,
-                    key=event_id,
-                    value=serialized,
-                    on_delivery=delivery_report,
-                )
-                producer.flush()
+                produce_and_flush(producer, output_topic, event_id, serialized)
                 consumer.commit(message=msg)
 
                 print(

@@ -143,7 +143,7 @@ services:
           # Core topics
           # ----------------------------
 
-          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9094 --create --topic pothole.raw.events.v1 \
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9094 --create --topic pothole.raw.events.v2 \
               --partitions 12 --replication-factor 3 \
               --if-not-exists \
               --config retention.ms=604800000 --config cleanup.policy=delete
@@ -153,7 +153,7 @@ services:
               --if-not-exists \
               --config retention.ms=259200000 --config cleanup.policy=delete
 
-          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9094 --create --topic pothole.surface.area.v1 \
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9094 --create --topic pothole.surface.area.v2 \
               --partitions 12 --replication-factor 3 \
               --if-not-exists \
               --config retention.ms=259200000 --config cleanup.policy=delete
@@ -331,7 +331,7 @@ services:
       - >-
         echo Creating MinIO bucket...;
         mc alias set admin http://minio:9000 minioadmin minioadmin;
-        mc mb admin/warehouse;
+        mc mb --ignore-existing admin/warehouse;
         mc ls admin;
         echo Bucket setup complete.;
     networks:

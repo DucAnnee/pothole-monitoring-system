@@ -139,20 +139,28 @@ class EventAggregationStore:
         self._lock = threading.Lock()
         self._store: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
             "raw_event": None,
+            "raw_msg": None,
             "severity": None,
+            "severity_msg": None,
             "created_at": time.time(),
         })
     
-    def add_raw_event(self, event_id: str, raw_event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def add_raw_event(
+        self, event_id: str, raw_event: Dict[str, Any], kafka_msg=None
+    ) -> Optional[Dict[str, Any]]:
         """Add raw event for an event_id."""
         with self._lock:
             self._store[event_id]["raw_event"] = raw_event
+            self._store[event_id]["raw_msg"] = kafka_msg
             return self._check_complete(event_id)
     
-    def add_severity(self, event_id: str, severity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def add_severity(
+        self, event_id: str, severity: Dict[str, Any], kafka_msg=None
+    ) -> Optional[Dict[str, Any]]:
         """Add severity score for an event_id."""
         with self._lock:
             self._store[event_id]["severity"] = severity
+            self._store[event_id]["severity_msg"] = kafka_msg
             return self._check_complete(event_id)
     
     def _check_complete(self, event_id: str) -> Optional[Dict[str, Any]]:
@@ -168,6 +176,8 @@ class EventAggregationStore:
                 "event_id": event_id,
                 "raw_event": entry["raw_event"],
                 "severity": entry["severity"],
+                "raw_msg": entry["raw_msg"],
+                "severity_msg": entry["severity_msg"],
             }
             del self._store[event_id]
             return result
@@ -468,7 +478,7 @@ class FinalEnrichmentService:
             "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
             "group.id": KAFKA_GROUP_ID,
             "auto.offset.reset": "earliest",
-            "enable.auto.commit": True,
+            "enable.auto.commit": False,
         }
         
         consumer = Consumer(consumer_conf)
@@ -636,7 +646,9 @@ class FinalEnrichmentService:
                             print(f"[RAW #{raw_count}] event_id={event_id}, vehicle={record['vehicle_id']}")
                             
                             # Add to store and check if complete
-                            combined_data = self.aggregation_store.add_raw_event(event_id, record)
+                            combined_data = self.aggregation_store.add_raw_event(
+                                event_id, record, msg
+                            )
                     
                     elif topic == SEVERITY_SCORE_TOPIC:
                         # Deserialize severity score
@@ -651,12 +663,20 @@ class FinalEnrichmentService:
                             print(f"[SEVERITY #{severity_count}] event_id={event_id}, score={record['severity_score']:.2f}")
                             
                             # Add to store and check if complete
-                            combined_data = self.aggregation_store.add_severity(event_id, record)
+                            combined_data = self.aggregation_store.add_severity(
+                                event_id, record, msg
+                            )
                     
                     # If we have both raw event and severity, process
                     if combined_data:
                         try:
                             self.process_combined_event(combined_data)
+                            if combined_data.get("raw_msg") is not None:
+                                self.consumer.commit(message=combined_data["raw_msg"])
+                            if combined_data.get("severity_msg") is not None:
+                                self.consumer.commit(
+                                    message=combined_data["severity_msg"]
+                                )
                             processed_count += 1
                         except Exception as e:
                             print(f"[ERROR] Failed to process event: {e}")
