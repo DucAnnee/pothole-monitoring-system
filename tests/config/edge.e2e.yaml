@@ -1,0 +1,65 @@
+model_type: "yolo"
+enable_monitoring: false
+
+models:
+  yolo:
+    weights_path: "models/yolo11s.pt"
+    confidence_threshold: 0.1
+  rfdetr:
+    weights_path: "models/rfdetr.pth"
+    confidence_threshold: 0.25
+
+detection_region:
+  trapezoid_coords:
+    - [0.4034, 0.5731]
+    - [0.5081, 0.5796]
+    - [0.6456, 0.7972]
+    - [0.3268, 0.7843]
+
+bev_calibration:
+  rectangle_coords:
+    - [0, 1000]
+    - [250, 1000]
+    - [250, 0]
+    - [0, 0]
+
+camera:
+  calibration_file: ".conf/camera_calibration.json"
+
+output:
+  segmentation_dir: "segmentation/results"
+  area_estimation_dir: "surface_area/results"
+  segmentation_dir_rfdetr: "segmentation/results_rfdetr"
+  area_estimation_dir_rfdetr: "surface_area/results_rfdetr"
+
+processing:
+  frame_interval: 1
+  enable_display: false
+  display_window_name: "Pothole Segmentation"
+
+kafka:
+  topic: "pothole.raw.events.v2"
+  bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}"
+  schema_registry_url: "${SCHEMA_REGISTRY_URL:http://localhost:8082}"
+  max_retries: 5
+  retry_delay: 2
+
+minio:
+  endpoint: "${MINIO_ENDPOINT:localhost:9000}"
+  access_key: "${MINIO_ACCESS_KEY:minioadmin}"
+  secret_key: "${MINIO_SECRET_KEY:minioadmin}"
+  bucket: "${MINIO_BUCKET:warehouse}"
+  prefix: "raw_images"
+  secure: false
+  max_retries: 5
+  retry_delay: 2
+
+uploader:
+  input_dir: "surface_area/results"
+  upload_interval: 10
+
+gps:
+  lat_min: 10.7
+  lat_max: 10.9
+  lon_min: 106.6
+  lon_max: 106.8

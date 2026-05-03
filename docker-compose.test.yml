@@ -1,0 +1,67 @@
+name: pothole-monitoring-test
+
+services:
+  kafka-1:
+    container_name: pms-test-kafka-kraft-1
+  kafka-2:
+    container_name: pms-test-kafka-kraft-2
+  kafka-3:
+    container_name: pms-test-kafka-kraft-3
+  kafka-init:
+    container_name: pms-test-kafka-init
+  kafka-ui:
+    container_name: pms-test-kafka-ui
+  schema-registry:
+    container_name: pms-test-schema-registry
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+  postgres:
+    container_name: pms-test-postgres
+  pgadmin:
+    container_name: pms-test-pgadmin
+  trino:
+    container_name: pms-test-trino
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+  minio:
+    container_name: pms-test-minio
+  setup_bucket:
+    container_name: pms-test-setup-bucket
+  grafana:
+    container_name: pms-test-grafana
+  polaris:
+    container_name: pms-test-polaris
+  polaris-setup:
+    container_name: pms-test-polaris-setup
+  redis:
+    container_name: pms-test-redis
+  redis-commander:
+    container_name: pms-test-redis-commander
+
+networks:
+  kafka-net:
+    name: pms-test-kafka-net
+
+volumes:
+  kafka-data-1:
+    name: pms-test-kafka-data-1
+  kafka-data-2:
+    name: pms-test-kafka-data-2
+  kafka-data-3:
+    name: pms-test-kafka-data-3
+  minio-data:
+    name: pms-test-minio-data
+  postgres-data:
+    name: pms-test-postgres-data
+  grafana-data:
+    name: pms-test-grafana-data
+  redis-data:
+    name: pms-test-redis-data

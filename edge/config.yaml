@@ -88,7 +88,7 @@ deduplication:
 
 # Kafka configuration
 kafka:
-  topic: "pothole.raw.events.v1"
+  topic: "pothole.raw.events.v2"
   bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
   schema_registry_url: "http://localhost:8082"
   delivery_timeout: 10

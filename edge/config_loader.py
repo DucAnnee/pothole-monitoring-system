@@ -340,7 +340,16 @@ class ConfigLoader:
 
     def get_kafka_topic(self) -> str:
         """Get Kafka topic name"""
-        return str(self.config.get("kafka", {}).get("topic", "pothole.raw.events.v1"))
+        return str(self.config.get("kafka", {}).get("topic", "pothole.raw.events.v2"))
+
+    def get_video_path(self):
+        """Get optional video path from config.
+
+        The normal runtime path is supplied by edge/main.py --video. This getter
+        keeps older config-summary/debug usage compatible without making video a
+        required YAML field.
+        """
+        return self.config.get("video")
 
     def get_kafka_bootstrap_servers(self) -> str:
         """Get Kafka bootstrap servers"""

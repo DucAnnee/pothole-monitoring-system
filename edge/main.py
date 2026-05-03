@@ -495,7 +495,7 @@ class EdgePipeline:
             self.uploader.flush()
 
         # process detection queue
-        while self.running:
+        while self.running or not self.detection_queue.empty():
             try:
                 # get detection from queue
                 detection = self.detection_queue.get(timeout=1.0)
@@ -525,12 +525,14 @@ class EdgePipeline:
                                 log_event(self.logger, "cloud_reconnected")
                                 self.uploader.process_local_storage()
 
-                self.detection_queue.task_done()
-
             except queue.Empty:
                 continue
             except Exception as e:
                 self.logger.exception("Uploading worker failed: %s", e)
+            finally:
+                if "detection" in locals():
+                    self.detection_queue.task_done()
+                    del detection
 
     def start(self) -> None:
         """Start the pipeline."""

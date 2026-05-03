@@ -23,8 +23,13 @@ class ConfigLoader:
                          If None, looks for config.yaml in same directory as this file.
         """
         if config_path is None:
-            # Default to config.yaml in the same directory as this file
-            config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+            config_path = os.environ.get(
+                "FINAL_ENRICHMENT_CONFIG",
+                os.environ.get(
+                    "POTHOLE_CONFIG_PATH",
+                    os.path.join(os.path.dirname(__file__), "config.yaml"),
+                ),
+            )
         
         self.config_path = config_path
         self.config: Dict[str, Any] = self._load_config()

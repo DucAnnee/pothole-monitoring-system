@@ -14,13 +14,22 @@ class ConfigLoader:
     Supports environment variable substitution for sensitive data.
     """
 
-    def __init__(self, config_path="config.yaml"):
+    def __init__(self, config_path=None):
         """
         Initialize config loader.
 
         Args:
             config_path: Path to YAML configuration file
         """
+        if config_path is None:
+            config_path = os.environ.get(
+                "DEPTH_SERVICE_CONFIG",
+                os.environ.get(
+                    "POTHOLE_CONFIG_PATH",
+                    os.path.join(os.path.dirname(__file__), "config.yaml"),
+                ),
+            )
+
         self.config_path = config_path
         self.config: Dict[str, Any] = self._load_config()
         self._validate_config()
@@ -206,15 +215,6 @@ class ConfigLoader:
     def get_confidence_max(self) -> float:
         """Get maximum confidence"""
         return self.config["processing"].get("confidence_max", 0.98)
-
-    def get_use_bev_image(self) -> bool:
-        """Check if BEV image should be used"""
-        return self.config["processing"].get("use_bev_image", True)
-
-    def get_fallback_to_regular_image(self) -> bool:
-        # TODO generate bev_image from original_image + homography
-        """Check if fallback to regular image is enabled"""
-        return self.config["processing"].get("fallback_to_regular_image", True)
 
     # ========================================================================
     # Convenience getters for logging configuration

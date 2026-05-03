@@ -1,8 +1,9 @@
 """
 Cloud Depth Estimation Pipeline
 
-Consumes raw events from 'pothole.raw.events.v1', performs depth estimation
-using Depth-Anything-V2 model on BEV images, and produces results to 'pothole.depth.v1'.
+Consumes surface area events from 'pothole.surface.area.v2', performs depth
+estimation using Depth-Anything-V2 model on BEV images, and produces results
+to 'pothole.depth.v1'.
 """
 
 import sys
@@ -33,24 +34,19 @@ from config_loader import ConfigLoader
 # ============================================================================
 # AVRO SCHEMAS
 # ============================================================================
-RAW_EVENT_SCHEMA_STR = """
+SURFACE_AREA_SCHEMA_STR = """
 {
   "type": "record",
-  "name": "RawEvent",
-  "namespace": "pothole.raw.v1",
+  "name": "SurfaceAreaEstimate",
+  "namespace": "pothole.surface.v2",
   "fields": [
     {"name": "event_id", "type": "string"},
-    {"name": "vehicle_id", "type": "string"},
-    {"name": "timestamp", "type": {"type": "long", "logicalType": "timestamp-millis"}},
-    {"name": "gps_lat", "type": "double"},
-    {"name": "gps_lon", "type": "double"},
-    {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
-    {"name": "raw_image_path", "type": "string"},
-    {"name": "bev_image_path", "type": ["null", "string"], "default": null},
-    {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
-    {"name": "bev_mask", "type": ["null", {"type": "array", "items": {"type": "array", "items": "double"}}], "default": null},
+    {"name": "raw_image_object_key", "type": "string"},
+    {"name": "bev_object_key", "type": "string"},
+    {"name": "bev_mask", "type": "string"},
     {"name": "surface_area_cm2", "type": "double"},
-    {"name": "detection_confidence", "type": ["null", "double"], "default": null}
+    {"name": "confidence", "type": ["null", "double"], "default": null},
+    {"name": "processed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
   ]
 }
 """
@@ -64,6 +60,7 @@ DEPTH_ESTIMATE_SCHEMA_STR = """
     {"name": "event_id", "type": "string"},
     {"name": "depth_cm", "type": "double"},
     {"name": "confidence", "type": ["null", "double"], "default": null},
+    {"name": "surface_area_cm2", "type": "double"},
     {"name": "processed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
   ]
 }
@@ -279,7 +276,7 @@ def create_consumer(config: ConfigLoader):
         "bootstrap.servers": config.get_kafka_bootstrap_servers(),
         "group.id": config.get_kafka_consumer_group_id(),
         "auto.offset.reset": "earliest",
-        "enable.auto.commit": True,
+        "enable.auto.commit": False,
     }
 
     consumer = Consumer(consumer_conf)
@@ -298,13 +295,13 @@ def create_producer(config: ConfigLoader):
 
 
 def create_deserializer(config: ConfigLoader):
-    """Create Avro deserializer for raw events."""
+    """Create Avro deserializer for surface area events."""
     schema_registry_conf = {"url": config.get_kafka_schema_registry_url()}
     schema_registry_client = SchemaRegistryClient(schema_registry_conf)
 
     return AvroDeserializer(
         schema_registry_client,
-        RAW_EVENT_SCHEMA_STR,
+        SURFACE_AREA_SCHEMA_STR,
         lambda obj, ctx: obj,
     )
 
@@ -329,6 +326,23 @@ def delivery_report(err, msg):
         print(f"[DELIVERED] {msg.topic()} [{msg.partition()}] @ {msg.offset()}")
 
 
+def produce_and_flush(producer, topic, key, value, timeout=30):
+    """Produce one message and return only after Kafka acknowledges delivery."""
+    delivery_error = {"error": None}
+
+    def callback(err, msg):
+        delivery_report(err, msg)
+        if err is not None:
+            delivery_error["error"] = err
+
+    producer.produce(topic=topic, key=key, value=value, on_delivery=callback)
+    remaining = producer.flush(timeout)
+    if remaining > 0:
+        raise TimeoutError(f"Timed out delivering message to {topic}")
+    if delivery_error["error"] is not None:
+        raise RuntimeError(f"Failed delivering message to {topic}: {delivery_error['error']}")
+
+
 # ============================================================================
 # MAIN LOOP
 # ============================================================================
@@ -338,7 +352,13 @@ def main():
     print("=" * 70)
 
     # Load configuration
-    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    config_path = os.environ.get(
+        "DEPTH_SERVICE_CONFIG",
+        os.environ.get(
+            "POTHOLE_CONFIG_PATH",
+            os.path.join(os.path.dirname(__file__), "config.yaml"),
+        ),
+    )
     config = ConfigLoader(config_path)
 
     print(f"[INFO] Configuration loaded from: {config_path}")
@@ -378,40 +398,40 @@ def main():
                 continue
 
             try:
-                # Deserialize the raw event
-                raw_event = deserializer(
+                surface_event = deserializer(
                     msg.value(), SerializationContext(source_topic, MessageField.VALUE)
                 )
 
-                if raw_event is None:
+                if surface_event is None:
                     continue
 
-                event_id = raw_event["event_id"]
-                image_path = raw_event["raw_image_path"]
-                surface_area = raw_event.get("surface_area_cm2")
-                detection_conf = raw_event.get("detection_confidence")
+                event_id = surface_event["event_id"]
+                bev_key = surface_event["bev_object_key"]
+                raw_key = surface_event["raw_image_object_key"]
+                surface_area_cm2 = surface_event["surface_area_cm2"]
+                bev_confidence = surface_event.get("confidence")
                 message_count += 1
 
                 print(f"\n[RECEIVED #{message_count}] event_id={event_id}")
                 print(
-                    f"[INFO] Surface area: {surface_area:.2f} cm², Detection confidence: {detection_conf:.4f}"
+                    f"[INFO] Surface area: {surface_area_cm2:.2f} cm², Detection confidence: {bev_confidence or 0.0:.4f}"
                 )
 
                 # Try to get BEV image first
                 image_bytes = None
-                bev_path = raw_event.get("bev_image_path")
+                bev_path = bev_key
 
-                if config.get_use_bev_image() and bev_path is not None:
+                if bev_path:
                     print(f"[INFO] Attempting to download BEV image: {bev_path}")
                     image_bytes = download_image_from_minio(
                         minio_client, bev_path, config.get_minio_bucket()
                     )
 
                 # Fallback to regular image if BEV not found
-                if image_bytes is None and config.get_fallback_to_regular_image():
-                    print(f"[INFO] BEV not found, using regular image: {image_path}")
+                if image_bytes is None:
+                    print(f"[INFO] BEV not found, using regular image: {raw_key}")
                     image_bytes = download_image_from_minio(
-                        minio_client, image_path, config.get_minio_bucket()
+                        minio_client, raw_key, config.get_minio_bucket()
                     )
 
                 if image_bytes is None:
@@ -435,6 +455,7 @@ def main():
                     "event_id": event_id,
                     "depth_cm": depth_cm,
                     "confidence": confidence,
+                    "surface_area_cm2": surface_area_cm2,
                     "processed_at": processed_at,
                 }
 
@@ -444,13 +465,8 @@ def main():
                     SerializationContext(output_topic, MessageField.VALUE),
                 )
 
-                producer.produce(
-                    topic=output_topic,
-                    key=event_id,
-                    value=serialized_value,
-                    on_delivery=delivery_report,
-                )
-                producer.poll(0)
+                produce_and_flush(producer, output_topic, event_id, serialized_value)
+                consumer.commit(message=msg)
 
             except Exception as e:
                 print(f"[ERROR] Failed to process message: {e}")
