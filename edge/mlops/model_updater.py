@@ -9,9 +9,12 @@ from urllib.parse import urljoin, urlparse
 from urllib.request import url2pathname, urlopen
 
 from .artifacts import file_size, sha256_file
-from .manifest_signature import verify_manifest_signature, SignatureError
+from .manifest_signature import SignatureError, verify_manifest_signature
 from .model_manifest import ManifestError, validate_manifest, write_manifest
 from .model_registry import ModelRegistry, RegistryError
+from pipeline_logger import get_pipeline_logger, log_event
+
+LOGGER = get_pipeline_logger("mlops.model_updater")
 
 
 class UpdateError(Exception):
@@ -24,13 +27,13 @@ def parse_args() -> argparse.Namespace:
 
     check = subparsers.add_parser("check", help="Validate a hosted manifest")
     check.add_argument("--manifest-uri", required=True)
-    check.add_argument("--timeout-seconds", type=float, default=30.0)
+    check.add_argument("--timeout-seconds", type=_positive_float, default=30.0)
     _add_signature_args(check)
 
     fetch = subparsers.add_parser("fetch", help="Fetch a manifest and model artifact")
     fetch.add_argument("--manifest-uri", required=True)
     fetch.add_argument("--staging-dir", default="models/staging")
-    fetch.add_argument("--timeout-seconds", type=float, default=30.0)
+    fetch.add_argument("--timeout-seconds", type=_positive_float, default=30.0)
     _add_signature_args(fetch)
 
     deploy = subparsers.add_parser(
@@ -42,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     deploy.add_argument("--registry-path", default="mlops/model_registry.json")
     deploy.add_argument("--reason", default="")
     deploy.add_argument("--operator", default="")
-    deploy.add_argument("--timeout-seconds", type=float, default=30.0)
+    deploy.add_argument("--timeout-seconds", type=_positive_float, default=30.0)
     deploy.add_argument(
         "--config",
         default="config.yaml",
@@ -111,6 +114,7 @@ def load_manifest_uri(
     require_signature: bool = False,
 ) -> Dict[str, Any]:
     """Load and validate a manifest from a local path or HTTP(S) URL."""
+    log_event(LOGGER, "manifest_load_start", manifest_uri=manifest_uri)
     try:
         manifest = json.loads(
             _read_uri(manifest_uri, timeout_seconds=timeout_seconds).decode("utf-8")
@@ -125,6 +129,12 @@ def load_manifest_uri(
             expected_key_id=expected_signature_key_id,
             require_signature=require_signature,
         )
+    log_event(
+        LOGGER,
+        "manifest_load_complete",
+        manifest_uri=manifest_uri,
+        model_id=manifest.get("model_id", "unknown"),
+    )
     return manifest
 
 
@@ -138,6 +148,12 @@ def fetch_model_package(
     require_signature: bool = False,
 ) -> Dict[str, str]:
     """Download a manifest and artifact into a local staging directory."""
+    log_event(
+        LOGGER,
+        "model_fetch_start",
+        manifest_uri=manifest_uri,
+        staging_dir=staging_dir,
+    )
     manifest = load_manifest_uri(
         manifest_uri,
         timeout_seconds=timeout_seconds,
@@ -152,6 +168,13 @@ def fetch_model_package(
         manifest_uri, manifest["artifact_name"]
     )
     artifact_path = package_dir / manifest["artifact_name"]
+    log_event(
+        LOGGER,
+        "model_artifact_pull_start",
+        model_id=manifest["model_id"],
+        artifact_uri=artifact_uri,
+        artifact_path=artifact_path,
+    )
     _copy_or_download(artifact_uri, artifact_path, timeout_seconds=timeout_seconds)
     _verify_artifact(
         artifact_path,
@@ -161,6 +184,12 @@ def fetch_model_package(
 
     manifest_path = package_dir / "manifest.json"
     write_manifest(manifest, manifest_path)
+    log_event(
+        LOGGER,
+        "model_fetch_complete",
+        model_id=manifest["model_id"],
+        package_dir=package_dir,
+    )
     return {
         "model_id": str(manifest["model_id"]),
         "package_dir": str(package_dir),
@@ -184,6 +213,13 @@ def deploy_from_manifest(
     candidate_validator: Callable[[Dict[str, Any], Path], None] | None = None,
 ) -> Dict[str, Any]:
     """Fetch, verify, register, smoke-check, and activate a hosted model."""
+    log_event(
+        LOGGER,
+        "model_deploy_prepare",
+        manifest_uri=manifest_uri,
+        artifacts_dir=artifacts_dir,
+        registry_path=registry_path,
+    )
     package = fetch_model_package(
         manifest_uri,
         staging_dir,
@@ -204,7 +240,15 @@ def deploy_from_manifest(
     model_dir = Path(artifacts_dir) / manifest["model_id"]
     model_dir.mkdir(parents=True, exist_ok=True)
     artifact_target = model_dir / manifest["artifact_name"]
+
     if artifact_source.resolve() != artifact_target.resolve():
+        log_event(
+            LOGGER,
+            "model_artifact_install",
+            model_id=manifest["model_id"],
+            source=artifact_source,
+            target=artifact_target,
+        )
         shutil.copy2(artifact_source, artifact_target)
     _verify_artifact(
         artifact_target,
@@ -222,6 +266,11 @@ def deploy_from_manifest(
 
     if active and active.get("model_id") == manifest["model_id"]:
         registry.validate_model(active)
+        log_event(
+            LOGGER,
+            "model_deploy_already_active",
+            model_id=manifest["model_id"],
+        )
         return {
             "action": "already_active",
             "model_id": manifest["model_id"],
@@ -230,7 +279,17 @@ def deploy_from_manifest(
 
     if candidate_validator:
         try:
+            log_event(
+                LOGGER,
+                "model_candidate_validation_start",
+                model_id=manifest["model_id"],
+            )
             candidate_validator(manifest, artifact_target)
+            log_event(
+                LOGGER,
+                "model_candidate_validation_complete",
+                model_id=manifest["model_id"],
+            )
         except Exception as exc:
             raise UpdateError(
                 f"Candidate model validation failed for {manifest['model_id']}: {exc}"
@@ -242,10 +301,17 @@ def deploy_from_manifest(
         operator=operator,
         source="updater",
     )
+    log_event(
+        LOGGER,
+        "model_deploy_complete",
+        model_id=manifest["model_id"],
+        deployment_id=deployment.get("deployment_id", ""),
+    )
     return {"action": "deployed", "deployment": deployment}
 
 
 def _add_signature_args(parser: argparse.ArgumentParser) -> None:
+    """Add manifest signature verification arguments to a parser."""
     parser.add_argument(
         "--signature-public-key",
         help="Pinned Ed25519 public key used to verify signed manifests",
@@ -275,12 +341,19 @@ def _signature_kwargs(args: argparse.Namespace) -> Dict[str, Any]:
 def _build_candidate_load_validator(
     config_path: str,
 ) -> Callable[[Dict[str, Any], Path], None]:
+    """Build a validator that smoke-loads through the edge segmenter path."""
+
     def validate_candidate(manifest: Dict[str, Any], artifact_path: Path) -> None:
         from config_loader import load_config
         from segmentation import PotholeSegmenter
 
         config = load_config(config_path)
-        print(f"[INFO] Smoke-loading candidate model: {manifest['model_id']}")
+        log_event(
+            LOGGER,
+            "model_smoke_load_start",
+            model_id=manifest["model_id"],
+            artifact_path=artifact_path,
+        )
         segmenter = PotholeSegmenter.create(
             model_type=manifest["model_type"],
             model_path=str(artifact_path),
@@ -289,7 +362,11 @@ def _build_candidate_load_validator(
             frame_interval=config.get_frame_interval(),
         )
         try:
-            print(f"[INFO] Candidate model loaded successfully: {manifest['model_id']}")
+            log_event(
+                LOGGER,
+                "model_smoke_load_complete",
+                model_id=manifest["model_id"],
+            )
         finally:
             segmenter.cleanup()
 
@@ -302,9 +379,16 @@ def _ensure_registered(
     artifact_path: Path,
     manifest_uri: str,
 ) -> None:
+    """Ensure the model described by the manifest is registered in the registry."""
     try:
         registered = registry.get_model(manifest["model_id"])
     except RegistryError:
+        log_event(
+            LOGGER,
+            "model_register",
+            model_id=manifest["model_id"],
+            artifact_path=artifact_path,
+        )
         registry.register_model(
             model_id=manifest["model_id"],
             model_type=manifest["model_type"],
@@ -334,6 +418,7 @@ def _ensure_registered(
 
 
 def _read_uri(uri: str, *, timeout_seconds: float) -> bytes:
+    """Read bytes from a local path or HTTP(S) URL."""
     parsed = urlparse(uri)
     if parsed.scheme in {"http", "https", "file"}:
         with urlopen(uri, timeout=timeout_seconds) as response:
@@ -342,21 +427,36 @@ def _read_uri(uri: str, *, timeout_seconds: float) -> bytes:
 
 
 def _copy_or_download(uri: str, destination: Path, *, timeout_seconds: float) -> None:
+    """Copy a local file or download an HTTP(S) URL to a destination path."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     source_path = _local_path_from_uri(uri)
+
+    # The source is a local file
     if source_path is not None:
         if source_path.resolve() == destination.resolve():
             return
+        log_event(LOGGER, "artifact_copy", source=source_path, destination=destination)
         shutil.copy2(source_path, destination)
         return
 
+    # The source is remote
+    # Download to a temporary file first and then move to the final destination
     temp_path = destination.with_suffix(destination.suffix + ".tmp")
-    with urlopen(uri, timeout=timeout_seconds) as response, temp_path.open("wb") as f:
-        shutil.copyfileobj(response, f)
-    temp_path.replace(destination)
+    log_event(LOGGER, "artifact_download", uri=uri, destination=destination)
+    try:
+        with urlopen(uri, timeout=timeout_seconds) as response, temp_path.open(
+            "wb"
+        ) as f:
+            shutil.copyfileobj(response, f)
+        temp_path.replace(destination)
+    except BaseException:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
 
 
 def _resolve_related_uri(base_uri: str, filename: str) -> str:
+    """Resolve an artifact URI beside a manifest URI."""
     parsed = urlparse(base_uri)
     if parsed.scheme in {"http", "https", "file"}:
         return urljoin(base_uri, filename)
@@ -364,6 +464,7 @@ def _resolve_related_uri(base_uri: str, filename: str) -> str:
 
 
 def _local_path_from_uri(uri: str) -> Path | None:
+    """Return a local path for local/file URIs; return None for remote URIs."""
     parsed = urlparse(uri)
     if parsed.scheme == "file":
         return Path(url2pathname(parsed.path))
@@ -373,6 +474,8 @@ def _local_path_from_uri(uri: str) -> Path | None:
 
 
 def _verify_artifact(path: Path, expected_sha256: str, expected_size: int) -> None:
+    """Verify artifact integrity after download or copy."""
+    log_event(LOGGER, "artifact_verify_start", path=path)
     actual_sha256 = sha256_file(path)
     actual_size = file_size(path)
     if actual_sha256 != expected_sha256:
@@ -383,6 +486,14 @@ def _verify_artifact(path: Path, expected_sha256: str, expected_size: int) -> No
         raise UpdateError(
             f"Size mismatch for {path}: expected {expected_size}, got {actual_size}"
         )
+    log_event(LOGGER, "artifact_verify_complete", path=path, size=actual_size)
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than 0")
+    return parsed
 
 
 if __name__ == "__main__":

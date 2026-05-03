@@ -10,7 +10,7 @@ from uuid import uuid4
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 import random
 
 from confluent_kafka import Producer
@@ -20,6 +20,7 @@ from confluent_kafka.schema_registry.avro import AvroSerializer
 from minio import Minio
 
 from data_models import DetectionData, BundledData
+from pipeline_logger import get_pipeline_logger, log_event
 
 # ============================================================================
 # AVRO SCHEMA
@@ -62,6 +63,7 @@ class Uploader:
 
         self.config = config
         self.vehicle_id = vehicle_id
+        self.logger = get_pipeline_logger("uploader")
 
         # local storage directory
         self.storage_dir = Path("local_storage")
@@ -114,14 +116,14 @@ class Uploader:
             )
 
             if self.is_online:
-                print("[SUCCESS] All cloud connections established")
+                log_event(self.logger, "cloud_connections_ready")
             else:
-                print(
-                    "[WARN] Operating in offline mode, storing processed data to disk"
+                self.logger.warning(
+                    "Operating in offline mode, storing processed data to disk"
                 )
 
         except Exception as e:
-            print(f"[ERROR] Failed to initialize connections: {e}")
+            self.logger.error("Failed to initialize connections: %s", e)
             self.is_online = False
 
     def _connect_minio(self) -> Optional[Minio]:
@@ -139,11 +141,11 @@ class Uploader:
             if not client.bucket_exists(bucket):
                 client.make_bucket(bucket)
 
-            print(f"[SUCCESS] Connected to MinIO bucket: {bucket}")
+            log_event(self.logger, "minio_connected", bucket=bucket)
             return client
 
         except Exception as e:
-            print(f"[ERROR] MinIO connection failed: {e}")
+            self.logger.error("MinIO connection failed: %s", e)
             return None
 
     def _create_kafka_producer(self) -> Optional[Producer]:
@@ -154,11 +156,11 @@ class Uploader:
                 "bootstrap.servers": kafka_config["bootstrap_servers"],
             }
             producer = Producer(producer_conf)
-            print("[SUCCESS] Connected to Kafka brokers")
+            log_event(self.logger, "kafka_connected")
             return producer
 
         except Exception as e:
-            print(f"[ERROR] Kafka connection failed: {e}")
+            self.logger.error("Kafka connection failed: %s", e)
             return None
 
     def _create_schema_registry_client(self) -> Optional[SchemaRegistryClient]:
@@ -167,11 +169,11 @@ class Uploader:
         try:
             schema_registry_conf = {"url": kafka_config["schema_registry_url"]}
             client = SchemaRegistryClient(schema_registry_conf)
-            print("[SUCCESS] Connected to Schema Registry")
+            log_event(self.logger, "schema_registry_connected")
             return client
 
         except Exception as e:
-            print(f"[ERROR] Schema Registry connection failed: {e}")
+            self.logger.error("Schema Registry connection failed: %s", e)
             return None
 
     def process_detection(self, detection: DetectionData) -> List[BundledData]:
@@ -200,7 +202,7 @@ class Uploader:
                 bundled_list.append(bundled)
 
             except Exception as e:
-                print(f"[ERROR] Failed to process mask: {e}")
+                self.logger.error("Failed to process mask: %s", e)
                 continue
 
         return bundled_list
@@ -250,7 +252,7 @@ class Uploader:
                 SerializationContext(topic, MessageField.VALUE),
             )
 
-            delivery_errors = []
+            delivery_errors: list[str] = []
 
             def delivery_report(err, msg):
                 if err is not None:
@@ -267,23 +269,30 @@ class Uploader:
             timeout = float(self.config.config["kafka"].get("delivery_timeout", 10))
             pending = self.kafka_producer.flush(timeout)  # type: ignore
             if pending > 0:
-                print(
-                    f"[ERROR] Kafka delivery timed out for {bundled.event_id}; "
-                    f"{pending} message(s) still pending"
+                self.logger.error(
+                    "Kafka delivery timed out for %s; %s message(s) still pending",
+                    bundled.event_id,
+                    pending,
                 )
                 return False
             if delivery_errors:
-                print(
-                    f"[ERROR] Kafka delivery failed for {bundled.event_id}: "
-                    f"{'; '.join(delivery_errors)}"
+                self.logger.error(
+                    "Kafka delivery failed for %s: %s",
+                    bundled.event_id,
+                    "; ".join(delivery_errors),
                 )
                 return False
 
-            print(f"[UPLOAD] Event {bundled.event_id} delivered")
+            log_event(
+                self.logger,
+                "upload_delivered",
+                event_id=bundled.event_id,
+                frame_id=bundled.frame_id,
+            )
             return True
 
         except Exception as e:
-            print(f"[ERROR] Upload failed: {e}")
+            self.logger.error("Upload failed: %s", e)
             return False
 
     def _generate_random_gps(self):
@@ -296,7 +305,7 @@ class Uploader:
     def _delivery_report(self, err, msg):
         """Kafka delivery callback"""
         if err is not None:
-            print(f"Delivery failed: {err}")
+            self.logger.error("Kafka delivery failed: %s", err)
         else:
             self.stats["uploaded"] += 1
 
@@ -310,7 +319,10 @@ class Uploader:
         try:
             # convert RGB to BGR and encode as JPEG
             image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-            _, buffer = cv2.imencode(".jpg", image_bgr)
+            encoded, buffer = cv2.imencode(".jpg", image_bgr)
+            if not encoded:
+                self.logger.error("JPEG encoding failed for event %s", event_id)
+                return None
             image_bytes = buffer.tobytes()
 
             minio_config = self.config.config["minio"]
@@ -328,7 +340,7 @@ class Uploader:
             return f"s3://{bucket}/{object_name}"
 
         except Exception as e:
-            print(f"[ERROR] MinIO upload failed: {e}")
+            self.logger.error("MinIO upload failed: %s", e)
             return None
 
     def store_to_disk(self, bundled: BundledData):
@@ -341,7 +353,12 @@ class Uploader:
         try:
             # save images
             img_path = self.images_dir / f"{bundled.event_id}.jpg"
-            cv2.imwrite(str(img_path), cv2.cvtColor(bundled.frame, cv2.COLOR_RGB2BGR))
+            image_written = cv2.imwrite(
+                str(img_path),
+                cv2.cvtColor(bundled.frame, cv2.COLOR_RGB2BGR),
+            )
+            if not image_written:
+                raise OSError(f"Could not write local image: {img_path}")
 
             # save metadata
             metadata = {
@@ -356,10 +373,15 @@ class Uploader:
             with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
 
-            print(f"[STORED] Event {bundled.event_id} saved to disk")
+            log_event(
+                self.logger,
+                "event_stored_local",
+                event_id=bundled.event_id,
+                frame_id=bundled.frame_id,
+            )
             self.stats["stored"] += 1
         except Exception as e:
-            print(f"[ERROR] Failed to store to disk: {e}")
+            self.logger.error("Failed to store to disk: %s", e)
             self.stats["failed"] += 1
 
     def process_local_storage(self):
@@ -367,10 +389,14 @@ class Uploader:
         metadata_files = list(self.metadata_dir.glob("*.json"))
 
         if not metadata_files:
-            print("[INFO] No pending data in local storage")
+            log_event(self.logger, "local_storage_empty")
             return
 
-        print(f"[INFO] Processing {len(metadata_files)} stored events...")
+        log_event(
+            self.logger,
+            "local_storage_replay",
+            stored_events=len(metadata_files),
+        )
 
         for metadata_path in metadata_files:
             try:
@@ -384,7 +410,7 @@ class Uploader:
                 img_path = self.images_dir / f"{event_id}.jpg"
 
                 if not img_path.exists():
-                    print(f"[WARN] Missing image for {event_id}")
+                    self.logger.warning("Missing image for %s", event_id)
                     continue
 
                 frame = cv2.imread(str(img_path))
@@ -405,13 +431,13 @@ class Uploader:
                     # delete files on success
                     img_path.unlink()
                     metadata_path.unlink()
-                    print(f"[CLEANUP] Deleted stored event {event_id}")
+                    log_event(self.logger, "stored_event_deleted", event_id=event_id)
                 else:
-                    print(f"[WARN] Failed to upload stored event {event_id}")
+                    self.logger.warning("Failed to upload stored event %s", event_id)
                     break  # stop processing if upload fails
 
             except Exception as e:
-                print(f"[ERROR] Failed to process stored event: {e}")
+                self.logger.error("Failed to process stored event: %s", e)
                 continue
 
     def flush(self):
@@ -421,11 +447,11 @@ class Uploader:
 
     def print_stats(self):
         """Print statistics."""
-        print(f"\n{'='*70}")
-        print("PROCESSING & UPLOAD STATISTICS")
-        print(f"{'='*70}")
-        print(f"Processed:  {self.stats['processed']}")
-        print(f"Uploaded:   {self.stats['uploaded']}")
-        print(f"Stored:     {self.stats['stored']}")
-        print(f"Failed:     {self.stats['failed']}")
-        print(f"{'='*70}\n")
+        log_event(
+            self.logger,
+            "upload_stats",
+            processed=self.stats["processed"],
+            uploaded=self.stats["uploaded"],
+            stored=self.stats["stored"],
+            failed=self.stats["failed"],
+        )

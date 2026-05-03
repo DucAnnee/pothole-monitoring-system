@@ -20,7 +20,12 @@ from mlops.model_manifest import ManifestError
 from mlops.model_registry import ModelRegistry, RegistryError
 from mlops.model_updater import UpdateError, deploy_from_manifest
 from mlops.manifest_signature import SignatureError
-from segmentation import PotholeSegmenter
+from pipeline_logger import (
+    configure_pipeline_logging,
+    get_pipeline_logger,
+    log_event,
+)
+from segmentation import DetectionDeduplicator, PotholeSegmenter
 
 
 # ============================================================================
@@ -29,31 +34,57 @@ from segmentation import PotholeSegmenter
 class EdgePipeline:
     """Main Edge pipeline orchestrator."""
 
-    def __init__(self, config_path: str = "config.yaml", video_path: str | None = None):
+    def __init__(
+        self,
+        config_path: str = "config.yaml",
+        video_path: str | None = None,
+        terminal_output: bool | None = None,
+    ):
         """
         Initialize the edge pipeline.
 
         Args:
             config_path: Path to configuration file
-            video_path: Optional video path. When omitted, the camera is used.
+            video_path: Optional video path override. When omitted, config
+                `video.path` is used before falling back to the camera.
+            terminal_output: Optional CLI override for terminal log output.
         """
         self.config: ConfigLoader = load_config(config_path)
-        self.video_path: str | None = video_path
+        configure_pipeline_logging(
+            self.config.get_logging_config(),
+            terminal_output=terminal_output,
+        )
+        self.logger = get_pipeline_logger("main")
+        self.video_path: str | None = (
+            video_path if video_path is not None else self.config.get_video_path()
+        )
         self.vehicle_id = f"vehicle-{uuid4().hex[:8]}"
+        log_event(
+            self.logger,
+            "pipeline_init",
+            vehicle_id=self.vehicle_id,
+            config_path=config_path,
+            terminal_output=(
+                self.config.get_terminal_output_enabled()
+                if terminal_output is None
+                else terminal_output
+            ),
+        )
         self._sync_latest_stable_model()
         self.runtime_model: RuntimeModel = self._resolve_runtime_model()
 
         # control flags
         self.running = False
-        self.threads = []
+        self.threads: list[threading.Thread] = []
         self._stop_lock = threading.Lock()
         self._stopped = False
 
         # in-memory queue
-        self.detection_queue = queue.Queue(maxsize=100)
+        self.detection_queue: queue.Queue[DetectionData] = queue.Queue(maxsize=100)
 
         # modules init
         self.segmenter = self._initialize_segmenter()
+        self.deduplicator: DetectionDeduplicator | None = self._initialize_deduplicator()
         self.uploader = Uploader(self.config, self.vehicle_id)
 
         # signal handlers for graceful shutdown
@@ -64,20 +95,45 @@ class EdgePipeline:
         """Initialize the segmenter from the resolved runtime model."""
         self.normalized_trapezoid = self.config.get_trapezoid_coords().astype(float)
         self.confidence_threshold = self.runtime_model.confidence_threshold
-        print("[INFO] Initializing segmentation model...")
-        print(
-            "[INFO] Runtime model: "
-            f"{self.runtime_model.model_id} "
-            f"({self.runtime_model.model_type})"
+        log_event(
+            self.logger,
+            "model_loading_start",
+            model_id=self.runtime_model.model_id,
+            model_type=self.runtime_model.model_type,
+            model_path=self.runtime_model.model_path,
+            source=self.runtime_model.source,
         )
-        print(f"[INFO] Model source: {self.runtime_model.source}")
 
-        return PotholeSegmenter.create(
+        segmenter = PotholeSegmenter.create(
             model_type=self.runtime_model.model_type,
             model_path=self.runtime_model.model_path,
             trapezoid_coords=self.config.get_trapezoid_coords(),
             confidence_threshold=self.runtime_model.confidence_threshold,
         )
+        log_event(
+            self.logger,
+            "model_loading_complete",
+            model_id=self.runtime_model.model_id,
+        )
+        return segmenter
+
+    def _initialize_deduplicator(self) -> DetectionDeduplicator | None:
+        """Initialize optional IoU-based detection deduplication."""
+        dedup_config = self.config.get_deduplication_config()
+        if not dedup_config.get("enabled", False):
+            return None
+
+        deduplicator = DetectionDeduplicator(
+            iou_threshold=float(dedup_config.get("iou_threshold", 0.5)),
+            max_age_frames=int(dedup_config.get("max_age_frames", 15)),
+        )
+        log_event(
+            self.logger,
+            "deduplication_enabled",
+            iou_threshold=deduplicator.iou_threshold,
+            max_age_frames=deduplicator.max_age_frames,
+        )
+        return deduplicator
 
     # ========================================================================
     # Startup model lifecycle
@@ -99,10 +155,10 @@ class EdgePipeline:
             )
             if update_config.get("fail_on_error", False):
                 raise RuntimeError(message)
-            print(f"[WARN] {message}; skipping startup model update.")
+            self.logger.warning("%s; skipping startup model update.", message)
             return
 
-        print("[INFO] Checking latest stable model manifest...")
+        log_event(self.logger, "model_fetch_check", manifest_uri=manifest_uri)
         try:
             deploy_kwargs: dict[str, Any] = {
                 "manifest_uri": manifest_uri,
@@ -115,20 +171,48 @@ class EdgePipeline:
                 **self._manifest_signature_options(update_config),
             }
             deploy_kwargs["candidate_validator"] = self._smoke_load_candidate_model
+            log_event(
+                self.logger,
+                "model_deploy_start",
+                manifest_uri=manifest_uri,
+                staging_dir=deploy_kwargs["staging_dir"],
+                artifacts_dir=deploy_kwargs["artifacts_dir"],
+            )
             result = deploy_from_manifest(**deploy_kwargs)
-        except (ManifestError, OSError, RegistryError, UpdateError, Exception) as exc:
+        except KeyboardInterrupt:
+            self.logger.warning("Startup model update cancelled by user.")
+            raise SystemExit(130) from None
+        except (
+            ManifestError,
+            OSError,
+            RegistryError,
+            SignatureError,
+            UpdateError,
+        ) as exc:
             message = f"Startup model update failed: {exc}"
             if update_config.get("fail_on_error", False):
                 raise RuntimeError(message) from exc
-            print(f"[WARN] {message}. Continuing with local registry/config model.")
+            self.logger.warning(
+                "%s. Continuing with local registry/config model.",
+                message,
+            )
             return
 
         if result.get("action") == "already_active":
-            print(f"[INFO] Stable model already active: {result.get('model_id')}")
+            log_event(
+                self.logger,
+                "model_deploy_skipped",
+                "stable model already active",
+                model_id=result.get("model_id"),
+            )
             return
 
         deployment = result.get("deployment", {})
-        print(f"[INFO] Deployed stable model: {deployment.get('model_id', 'unknown')}")
+        log_event(
+            self.logger,
+            "model_deploy_complete",
+            model_id=deployment.get("model_id", "unknown"),
+        )
 
     def _resolve_runtime_model(self) -> RuntimeModel:
         """Resolve the model settings that the segmenter should load.
@@ -148,7 +232,10 @@ class EdgePipeline:
         except (OSError, RegistryError) as exc:
             if not registry_config.get("fallback_to_config", True):
                 raise RuntimeError(f"Model registry is not usable: {exc}") from exc
-            print(f"[WARN] Model registry unavailable: {exc}. Falling back to config.")
+            self.logger.warning(
+                "Model registry unavailable: %s. Falling back to config.",
+                exc,
+            )
             return self._config_runtime_model()
 
         return self._registry_runtime_model(active_model, registry_path)
@@ -160,7 +247,12 @@ class EdgePipeline:
     ) -> None:
         """Load a candidate model before it is allowed to become active."""
         model_type = self._parse_model_type(manifest.get("model_type"))
-        print(f"[INFO] Smoke-loading candidate model: {manifest['model_id']}")
+        log_event(
+            self.logger,
+            "model_smoke_load_start",
+            model_id=manifest["model_id"],
+            artifact_path=artifact_path,
+        )
         segmenter = PotholeSegmenter.create(
             model_type=model_type,
             model_path=str(artifact_path),
@@ -169,7 +261,11 @@ class EdgePipeline:
             frame_interval=self.config.get_frame_interval(),
         )
         try:
-            print(f"[INFO] Candidate model loaded successfully: {manifest['model_id']}")
+            log_event(
+                self.logger,
+                "model_smoke_load_complete",
+                model_id=manifest["model_id"],
+            )
         finally:
             segmenter.cleanup()
 
@@ -224,31 +320,31 @@ class EdgePipeline:
 
     def _signal_handler(self, signum: int, frame: Any) -> None:
         """Handle shutdown signals."""
-        print("\n[INFO] Shutdown signal received. Stopping pipeline...")
+        log_event(self.logger, "shutdown_signal", signum=signum)
         self.stop()
 
     def inference_worker(self) -> None:
         """Inference worker thread - processes video and produces detections."""
-        print("[INFO] Inference worker started")
+        log_event(self.logger, "inference_worker_start")
         cap = None
 
         try:
             import cv2
 
             if self.video_path:
-                print("[INFO] Video path provided, running inference on video file")
                 cap = cv2.VideoCapture(self.video_path)
                 source = f"video: {self.video_path}"
             else:
-                print("[INFO] Running inference on camera (Device 0)")
-                # TODO: allow camera selection from config & poll available cameras
-                cap = cv2.VideoCapture(0)
-                source = "camera device 0"
+                camera_index = self.config.get_camera_index()
+                cap = cv2.VideoCapture(camera_index)
+                source = f"camera device {camera_index}"
+            log_event(self.logger, "capture_open_start", source=source)
 
             if not cap.isOpened():
-                print(f"[ERROR] Could not open input source: {source}")
+                self.logger.error("Could not open input source: %s", source)
                 self.running = False
                 return
+            log_event(self.logger, "capture_open_complete", source=source)
 
             frame_count = 0
             frame_interval = self.config.get_frame_interval()
@@ -264,7 +360,7 @@ class EdgePipeline:
                 ret, frame = cap.read()
 
                 if not ret:
-                    print("[INFO] End of video stream or cannot fetch frame.")
+                    log_event(self.logger, "capture_frame_unavailable", source=source)
                     self.running = False
                     break
 
@@ -277,7 +373,7 @@ class EdgePipeline:
                 # run inference
                 display_frame = frame.copy()
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pothole_masks = self.segmenter.segment(frame_rgb)
+                pothole_detections = self.segmenter.segment(frame_rgb)
 
                 # denormalize trapezoid for display
                 w, h = frame.shape[1], frame.shape[0]
@@ -294,22 +390,51 @@ class EdgePipeline:
                     2,
                 )
 
-                # get segmentation masks and filter for those in trapezoid area
-                masks = []
-                for mask_data, confidence in pothole_masks:
-                    if self.segmenter.pothole_in_trapezoid(mask_data, frame.shape):
+                roi_detections = []
+                for detection in pothole_detections:
+                    if self.segmenter.pothole_in_trapezoid(detection.mask, frame.shape):
                         # draw pothole on display frame
                         cv2.fillPoly(
                             display_frame,
-                            [mask_data.astype(np.int32)],
+                            [detection.mask.astype(np.int32)],
                             (255, 0, 0),
                         )
-                        coordinates = mask_data.tolist()
-                        masks.append(
-                            DetectionMask(
-                                conf=float(confidence), coordinates=coordinates
-                            )
+                        roi_detections.append(detection)
+
+                if self.deduplicator:
+                    accepted_detections = self.deduplicator.deduplicate(
+                        frame_index=frame_count,
+                        detections=roi_detections,
+                    )
+                    skipped_count = len(roi_detections) - len(accepted_detections)
+                    if skipped_count:
+                        log_event(
+                            self.logger,
+                            "deduplication_suppressed",
+                            frame_id=f"frame_{frame_count:06d}",
+                            suppressed=skipped_count,
+                            active_tracks=self.deduplicator.track_count,
                         )
+                else:
+                    accepted_detections = roi_detections
+
+                masks = [
+                    DetectionMask(
+                        conf=float(detection.confidence),
+                        coordinates=detection.mask.tolist(),
+                    )
+                    for detection in accepted_detections
+                ]
+
+                if pothole_detections or roi_detections or masks:
+                    log_event(
+                        self.logger,
+                        "detection_frame_processed",
+                        frame_id=f"frame_{frame_count:06d}",
+                        raw=len(pothole_detections),
+                        roi=len(roi_detections),
+                        accepted=len(masks),
+                    )
 
                 # only queue if potholes detected
                 if masks:
@@ -322,11 +447,18 @@ class EdgePipeline:
 
                     try:
                         self.detection_queue.put(detection, timeout=1.0)
-                        print(
-                            f"[INFERENCE] Queued {len(masks)} detections from {detection.frame_id}"
+                        log_event(
+                            self.logger,
+                            "detection_queued",
+                            frame_id=detection.frame_id,
+                            detections=len(masks),
+                            queue_depth=self.detection_queue.qsize(),
                         )
                     except queue.Full:
-                        print("[WARN] Detection queue full, dropping frame")
+                        self.logger.warning(
+                            "Detection queue full, dropping frame %s",
+                            detection.frame_id,
+                        )
 
                 # display frame
                 if enable_monitoring:
@@ -335,12 +467,12 @@ class EdgePipeline:
                     # check for quit key
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord("q"):
-                        print("\n[INFO] 'q' pressed, stopping inference...")
+                        log_event(self.logger, "shutdown_requested", source="keyboard")
                         self.running = False
                         break
 
         except Exception as e:
-            print(f"[ERROR] Inference worker failed: {e}")
+            self.logger.exception("Inference worker failed: %s", e)
             self.running = False
         finally:
             if cap is not None:
@@ -354,11 +486,11 @@ class EdgePipeline:
 
     def uploading_worker(self) -> None:
         """Uploading worker thread."""
-        print("[INFO] Uploading worker started")
+        log_event(self.logger, "upload_worker_start")
 
         # process local storage if online
         if self.uploader.is_online:
-            print("[INFO] Processing local storage...")
+            log_event(self.logger, "local_storage_replay_start")
             self.uploader.process_local_storage()
             self.uploader.flush()
 
@@ -378,7 +510,7 @@ class EdgePipeline:
                         success = self.uploader.upload_to_cloud(enriched)
                         if not success:
                             # connection lost, store to disk
-                            print("[WARN] Upload failed, storing to disk")
+                            self.logger.warning("Upload failed, storing to disk")
                             self.uploader.store_to_disk(enriched)
                             self.uploader.is_online = False
                     else:
@@ -387,10 +519,10 @@ class EdgePipeline:
 
                         # periodically check if back online
                         if self.uploader.stats["stored"] % 10 == 0:
-                            print("[INFO] Checking connection status...")
+                            log_event(self.logger, "cloud_reconnect_check")
                             self.uploader._initialize_connections()
                             if self.uploader.is_online:
-                                print("[INFO] Back online! Processing stored data...")
+                                log_event(self.logger, "cloud_reconnected")
                                 self.uploader.process_local_storage()
 
                 self.detection_queue.task_done()
@@ -398,22 +530,19 @@ class EdgePipeline:
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"[ERROR] Uploading worker failed: {e}")
+                self.logger.exception("Uploading worker failed: %s", e)
 
     def start(self) -> None:
         """Start the pipeline."""
-        print("=" * 70)
-        print("EDGE DEVICE WORKER")
-        print("=" * 70)
-        print(f"Vehicle ID: {self.vehicle_id}")
-        print(
-            "Model: "
-            f"{self.runtime_model.model_type.upper()} "
-            f"({self.runtime_model.model_id})"
+        log_event(
+            self.logger,
+            "pipeline_start",
+            vehicle_id=self.vehicle_id,
+            model_id=self.runtime_model.model_id,
+            model_type=self.runtime_model.model_type,
+            model_path=self.runtime_model.model_path,
+            online=self.uploader.is_online,
         )
-        print(f"Model Path: {self.runtime_model.model_path}")
-        print(f"Online: {self.uploader.is_online}")
-        print("=" * 70)
 
         self.running = True
 
@@ -433,7 +562,7 @@ class EdgePipeline:
 
         self.threads = [inference_thread, uploading_thread]
 
-        print("[INFO] Pipeline started. Press Ctrl+C to stop.\n")
+        log_event(self.logger, "pipeline_started")
 
         # threads monitoring
         try:
@@ -443,7 +572,11 @@ class EdgePipeline:
                 # print stats every 30 seconds
                 if int(time.time()) % 30 == 0:
                     self.uploader.print_stats()
-                    print(f"Queue depth: {self.detection_queue.qsize()}")
+                    log_event(
+                        self.logger,
+                        "queue_depth",
+                        depth=self.detection_queue.qsize(),
+                    )
 
         except KeyboardInterrupt:
             self.running = False
@@ -471,9 +604,9 @@ class EdgePipeline:
                 if thread is not current_thread and thread.is_alive()
             ]
             if alive_threads:
-                print(
-                    "[WARN] Worker thread(s) still running after shutdown timeout: "
-                    f"{', '.join(alive_threads)}"
+                self.logger.warning(
+                    "Worker thread(s) still running after shutdown timeout: %s",
+                    ", ".join(alive_threads),
                 )
 
             # flush Kafka producer
@@ -486,7 +619,7 @@ class EdgePipeline:
             if not alive_threads:
                 self.segmenter.cleanup()
 
-            print("[INFO] Pipeline stopped")
+            log_event(self.logger, "pipeline_stopped")
 
 
 def main() -> None:
@@ -503,13 +636,29 @@ def main() -> None:
     parser.add_argument(
         "--video",
         type=str,
-        help="Optional input video path. Omit this flag to use camera device 0.",
+        help="Optional input video path. Omit this flag to use config input source.",
+    )
+    parser.add_argument(
+        "--terminal-output",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Enable or disable terminal pipeline logs. "
+            "Omit to use config logging.terminal_output, which defaults to true."
+        ),
     )
 
     args = parser.parse_args()
 
-    pipeline = EdgePipeline(config_path=args.config, video_path=args.video)
-    pipeline.start()
+    try:
+        pipeline = EdgePipeline(
+            config_path=args.config,
+            video_path=args.video,
+            terminal_output=args.terminal_output,
+        )
+        pipeline.start()
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
 
 
 if __name__ == "__main__":
