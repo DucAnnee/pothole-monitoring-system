@@ -12,3 +12,4 @@ s3fs
 pyiceberg-core
 h3
 redis
+tritonclient[grpc]

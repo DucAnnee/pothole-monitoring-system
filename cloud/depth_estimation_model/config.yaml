@@ -1,7 +1,6 @@
 # ============================================================================
 # CLOUD DEPTH ESTIMATION SERVICE - CONFIGURATION
 # ============================================================================
-# Configuration for cloud-based depth estimation using Depth-Anything-V2
 
 # Kafka configuration
 kafka:
@@ -23,43 +22,28 @@ minio:
   max_retries: 5
   retry_delay: 2
 
-# Depth Anything V2 model configuration
-depth_model:
-  model_type: "vitl"  # Options: vits, vitb, vitl, vitg
-  model_path: "Depth-Anything-V2/depth_anything_v2_vitl.pth"
-  input_size: 518  # Input image size for the model
-  device: "auto"  # auto, cuda, mps, cpu
-  
-  # Model architecture configs
-  model_configs:
-    vits:
-      encoder: "vits"
-      features: 64
-      out_channels: [48, 96, 192, 384]
-    vitb:
-      encoder: "vitb"
-      features: 128
-      out_channels: [96, 192, 384, 768]
-    vitl:
-      encoder: "vitl"
-      features: 256
-      out_channels: [256, 512, 1024, 1024]
-    vitg:
-      encoder: "vitg"
-      features: 384
-      out_channels: [1536, 1536, 1536, 1536]
+# Triton Inference Server connection
+triton:
+  host: "${TRITON_HOST:triton-inference-server}"
+  grpc_port: "${TRITON_GRPC_PORT:8001}"
+  model_name: "depth_anything_v2"
+  model_version: "1"
+  timeout_seconds: 30
+
+# Client-side batch accumulation (flush on count OR timeout)
+batching:
+  max_batch_size: "${BATCH_MAX_SIZE:8}"
+  batch_timeout_ms: "${BATCH_TIMEOUT_MS:200}"
 
 # Processing configuration
 processing:
-  # Depth conversion parameters
+  model_input_size: 518
   depth_min_cm: 1.0
   depth_max_cm: 50.0
-  
-  # Confidence estimation parameters
   confidence_min: 0.75
   confidence_max: 0.98
-  
+
 # Logging configuration
 logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
   show_progress: true

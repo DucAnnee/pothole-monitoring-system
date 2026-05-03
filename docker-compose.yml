@@ -499,6 +499,39 @@ services:
   #     - kafka-net
   #   restart: unless-stopped
 
+  # ==========================================================
+  #  TRITON INFERENCE SERVER (GPU model serving)
+  # ==========================================================
+  triton-inference-server:
+    image: nvcr.io/nvidia/tritonserver:24.12-py3
+    container_name: triton-inference-server
+    ports:
+      - "8000:8000"   # HTTP inference
+      - "8001:8001"   # gRPC inference
+      - "8002:8002"   # metrics (Prometheus)
+    volumes:
+      - ./cloud/triton_inference_server/triton_model_repo:/models
+    command: >
+      tritonserver
+      --model-repository=/models
+      --log-verbose=0
+      --exit-on-error=false
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/v2/health/ready" ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - kafka-net
+
 networks:
   kafka-net:
     name: kafka-net
