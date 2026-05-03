@@ -50,6 +50,8 @@ class TelemetryLogger:
         output_path: Path,
         interval_sec: float = 1.0,
     ):
+        if interval_sec <= 0:
+            raise ValueError("interval_sec must be greater than 0")
         self.provider = provider
         self.output_path = output_path
         self.interval_sec = interval_sec
@@ -91,4 +93,3 @@ class TelemetryLogger:
         }
         row.update(sample)
         return {field: row.get(field, "") for field in TELEMETRY_FIELDS}
-

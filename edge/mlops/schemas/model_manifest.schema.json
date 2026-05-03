@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "artifact_name": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "artifact_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "artifact_size_bytes": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "artifact_uri": {
+      "type": "string"
+    },
+    "benchmark_summary_path": {
+      "type": "string"
+    },
+    "benchmark_summary_sha256": {
+      "type": "string"
+    },
+    "benchmark_summary_size_bytes": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "confidence_threshold": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    },
+    "created_at_utc": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "input_size": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "min_edge_version": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "model_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "model_type": {
+      "enum": [
+        "yolo",
+        "rfdetr"
+      ],
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "signature": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "const": "ed25519",
+          "type": "string"
+        },
+        "key_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "value": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "algorithm",
+        "key_id",
+        "value"
+      ],
+      "type": "object"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "training_dataset": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "model_id",
+    "model_type",
+    "artifact_name",
+    "artifact_sha256",
+    "artifact_size_bytes",
+    "confidence_threshold",
+    "min_edge_version",
+    "created_at_utc"
+  ],
+  "title": "Edge Model Manifest",
+  "type": "object"
+}

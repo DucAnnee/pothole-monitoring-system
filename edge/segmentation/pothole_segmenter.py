@@ -1,18 +1,27 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
 import os
-from typing import Literal
+from typing import Any, Sequence, TypeAlias
+
 import cv2
 import numpy as np
-from abc import ABC
+
+from data_models import BoundingBox, ModelType, SegmentedPothole
+from pipeline_logger import get_pipeline_logger, log_event
+
+MaskResult: TypeAlias = list[SegmentedPothole]
+LOGGER = get_pipeline_logger("segmenter")
 
 
 class PotholeSegmenter(ABC):
     def __init__(
         self,
-        model_path,
-        trapezoid_coords,
-        confidence_threshold=0.25,
-        frame_interval=30,
-    ):
+        model_path: str,
+        trapezoid_coords: np.ndarray,
+        confidence_threshold: float = 0.25,
+        frame_interval: int = 30,
+    ) -> None:
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
         self.frame_interval = frame_interval
@@ -21,12 +30,12 @@ class PotholeSegmenter(ABC):
 
     @staticmethod
     def create(
-        model_type: Literal["yolo", "rfdetr"],
-        model_path,
-        trapezoid_coords,
-        confidence_threshold=0.25,
-        frame_interval=30,
-    ):
+        model_type: ModelType,
+        model_path: str,
+        trapezoid_coords: np.ndarray,
+        confidence_threshold: float = 0.25,
+        frame_interval: int = 30,
+    ) -> PotholeSegmenter:
         """
         Factory method to load the appropriate pothole segmenter.
 
@@ -56,13 +65,15 @@ class PotholeSegmenter(ABC):
                 f"Unsupported model type: {model_type}. Choose 'yolo' or 'rfdetr'."
             )
 
-    def load_model(self):
+    @abstractmethod
+    def load_model(self) -> Any:
         """
         Load the corresponding model of the class
         """
         raise NotImplementedError("Class has to implement the load_model() method")
 
-    def segment(self, frame_rgb: np.ndarray):
+    @abstractmethod
+    def segment(self, frame_rgb: np.ndarray) -> MaskResult:
         """
         Segment the input RGB frame
 
@@ -70,11 +81,11 @@ class PotholeSegmenter(ABC):
         - frame_rgb (np.ndarray)
 
         Return:
-        - List of tuples of segmentation masks and confidences
+        - List of segmentation results with mask, confidence, and bbox
         """
         raise NotImplementedError("Class has to implement the segment() method")
 
-    def create_masked_image(self, frame_rgb):
+    def create_masked_image(self, frame_rgb: np.ndarray) -> np.ndarray:
         """
         Create a masked image where pixels outside the trapezoid are black.
         This focuses the model on the detection region.
@@ -95,13 +106,22 @@ class PotholeSegmenter(ABC):
 
         return masked_image
 
-    def point_in_polygon(self, point, polygon):
+    def point_in_polygon(self, point: Sequence[float], polygon: np.ndarray) -> bool:
         """Check if a point is inside a polygon"""
         return (
-            cv2.pointPolygonTest(polygon.astype(np.float32), tuple(point), False) >= 0
+            cv2.pointPolygonTest(
+                polygon.astype(np.float32),
+                (float(point[0]), float(point[1])),
+                False,
+            )
+            >= 0
         )
 
-    def pothole_in_trapezoid(self, pothole_mask, frame_shape):
+    def pothole_in_trapezoid(
+        self,
+        pothole_mask: np.ndarray,
+        frame_shape: tuple[int, ...],
+    ) -> bool:
         """
         Check if pothole mask is within the trapezoid detection area.
 
@@ -120,19 +140,20 @@ class PotholeSegmenter(ABC):
                 return False
         return True
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Cleanup resources"""
-        del self.model
+        if hasattr(self, "model"):
+            del self.model
 
 
 class YOLOSegmenter(PotholeSegmenter):
     def __init__(
         self,
-        model_path,
-        trapezoid_coords,
-        confidence_threshold=0.25,
-        frame_interval=30,
-    ):
+        model_path: str,
+        trapezoid_coords: np.ndarray,
+        confidence_threshold: float = 0.25,
+        frame_interval: int = 30,
+    ) -> None:
         """
         Initialize the pothole segmentation processor using YOLO.
 
@@ -157,21 +178,20 @@ class YOLOSegmenter(PotholeSegmenter):
             model_path, trapezoid_coords, confidence_threshold, frame_interval
         )
 
-    def load_model(self):
+    def load_model(self) -> Any:
         """Load YOLO segmentation model"""
-        print(f"[INFO] Loading YOLO model from {self.model_path}...")
+        log_event(LOGGER, "model_load_start", model_type="yolo", model_path=self.model_path)
         model = self.YOLO(self.model_path)
-        print("[INFO] YOLO model loaded successfully")
+        log_event(LOGGER, "model_load_complete", model_type="yolo")
         return model
 
-    def segment(self, frame_rgb) -> list[tuple[np.ndarray, float]]:
+    def segment(self, frame_rgb: np.ndarray) -> MaskResult:
         """
         Segment potholes using YOLO segmentation model on masked image.
 
         Args:
             frame_rgb: Input frame in RGB format
-
-        Returns: List of tuples (mask, confidence), where mask is np.array of shape (N, 2)
+        Returns: List of model outputs with mask, confidence, and bbox.
         """
         # create masked image
         masked_image = self.create_masked_image(frame_rgb)
@@ -181,29 +201,36 @@ class YOLOSegmenter(PotholeSegmenter):
             masked_image, conf=self.confidence_threshold, verbose=False
         )
 
-        pothole_masks = []
+        pothole_masks: MaskResult = []
 
         # process each detection
         if results and results[0].masks is not None:
-            # print("=" * 70)
-            # print(f"[INFO] Detections found: {len(results[0].masks)}")
-            # print("=" * 70)
             masks_data = results[0].masks.xy if hasattr(results[0].masks, "xy") else []
-            # print(masks_data)
-            confidences = results[0].boxes.conf if results[0].boxes is not None else []
-            # print(confidences)
+            boxes = results[0].boxes
+            confidences = boxes.conf if boxes is not None else []
+            bboxes = boxes.xyxy if boxes is not None else []
 
             for i, contour in enumerate(masks_data):
-                if i < len(confidences):
-                    confidence = confidences[i].item()
+                if i >= len(confidences) or i >= len(bboxes):
+                    continue
 
-                    # convert to numpy array
-                    if not isinstance(contour, np.ndarray):
-                        contour = np.array(contour)
+                try:
+                    bbox = _coerce_bbox(bboxes[i])
+                except ValueError:
+                    continue
+                confidence = float(confidences[i].item())
 
-                    # ensure shape (N, 2)
-                    if contour.shape[0] > 2:  # need at least 3 points for a polygon
-                        pothole_masks.append((contour.astype(np.float32), confidence))
+                if not isinstance(contour, np.ndarray):
+                    contour = np.array(contour)
+
+                if contour.shape[0] > 2:
+                    pothole_masks.append(
+                        SegmentedPothole(
+                            mask=contour.astype(np.float32),
+                            confidence=confidence,
+                            bbox=bbox,
+                        )
+                    )
 
         return pothole_masks
 
@@ -211,11 +238,11 @@ class YOLOSegmenter(PotholeSegmenter):
 class RFDETRSegmenter(PotholeSegmenter):
     def __init__(
         self,
-        model_path,
-        trapezoid_coords,
-        confidence_threshold=0.25,
-        frame_interval=30,
-    ):
+        model_path: str,
+        trapezoid_coords: np.ndarray,
+        confidence_threshold: float = 0.25,
+        frame_interval: int = 30,
+    ) -> None:
         """
         Initialize the pothole segmentation processor using RF-DETR.
 
@@ -238,31 +265,39 @@ class RFDETRSegmenter(PotholeSegmenter):
             model_path, trapezoid_coords, confidence_threshold, frame_interval
         )
 
-    def load_model(self):
+    def load_model(self) -> Any:
         """Load RF-DETR segmentation model"""
-        print(f"[INFO] Loading RF-DETR model from {self.model_path}...")
+        log_event(
+            LOGGER,
+            "model_load_start",
+            model_type="rfdetr",
+            model_path=self.model_path,
+        )
 
-        # if model_path is provided and exists, use it as pretrain_weights
+        # RF-DETR accepts a custom pretrain_weights path for local artifacts.
         if self.model_path and os.path.exists(self.model_path):
-            print(f"[INFO] Loading custom weights from {self.model_path}")
+            log_event(
+                LOGGER,
+                "model_custom_weights_selected",
+                model_type="rfdetr",
+                model_path=self.model_path,
+            )
             model = self.RFDETRSegPreview(pretrain_weights=self.model_path)
         else:
-            # use default pretrained weights
-            print("Loading pretrained RF-DETR-Seg-Preview weights")
+            log_event(LOGGER, "model_default_weights_selected", model_type="rfdetr")
             model = self.RFDETRSegPreview()
 
-        print("[INFO] RF-DETR model loaded successfully")
-        print(model)
+        log_event(LOGGER, "model_load_complete", model_type="rfdetr")
         return model
 
-    def segment(self, frame_rgb) -> list[tuple[np.ndarray, float]]:
+    def segment(self, frame_rgb: np.ndarray) -> MaskResult:
         """
         Segment potholes using RF-DETR segmentation model on masked image.
 
         Args:
             frame_rgb: Input frame in RGB format
 
-        Returns: List of tuples (mask, confidence), where mask is np.array of shape (N, 2)
+        Returns: List of model outputs with mask, confidence, and bbox.
         """
         # create masked image
         masked_image = self.create_masked_image(frame_rgb)
@@ -270,27 +305,25 @@ class RFDETRSegmenter(PotholeSegmenter):
         # run segmentation
         results = self.model.predict(masked_image, threshold=self.confidence_threshold)
 
-        pothole_masks = []
+        pothole_masks: MaskResult = []
 
         # process each detection
         if results is not None and len(results) > 0:
-            print("=" * 70)
-            print(f"[INFO] Detections found: {len(results)}")
-            print("=" * 70)
-
             # RF-DETR returns sv.Detections object
             # results.mask contains binary masks of shape (N, H, W)
             # results.confidence contains confidence scores
-            # results.class_id contains class IDs
             if hasattr(results, "mask") and results.mask is not None:
                 masks = results.mask  # shape: (N, H, W)
+                bboxes = getattr(results, "bbox", None)
+                if bboxes is None:
+                    return pothole_masks
                 confidences = results.confidence
-                # class_ids = results.class_id
-
-                print(f"Masks shape: {masks.shape}")
-                print(f"Confidences: {confidences}")
 
                 for i in range(len(masks)):
+                    try:
+                        bbox = _coerce_bbox(bboxes[i])
+                    except ValueError:
+                        continue
                     confidence = float(confidences[i])
                     binary_mask = masks[i]  # shape: (H, W)
 
@@ -298,14 +331,17 @@ class RFDETRSegmenter(PotholeSegmenter):
                     contour = self._mask_to_contour(binary_mask)
 
                     if contour is not None and len(contour) > 2:
-                        # Need at least 3 points for a polygon
-                        pothole_masks.append((contour, confidence))
-            else:
-                print("No masks in detections (detection mode only)")
+                        pothole_masks.append(
+                            SegmentedPothole(
+                                mask=contour,
+                                confidence=confidence,
+                                bbox=bbox,
+                            )
+                        )
 
         return pothole_masks
 
-    def _mask_to_contour(self, binary_mask):
+    def _mask_to_contour(self, binary_mask: np.ndarray) -> np.ndarray | None:
         """
         Convert a binary mask to contour coordinates.
 
@@ -333,3 +369,23 @@ class RFDETRSegmenter(PotholeSegmenter):
         contour_points = largest_contour.reshape(-1, 2).astype(np.float32)
 
         return contour_points
+
+
+def _coerce_bbox(value: Any) -> BoundingBox:
+    """Convert a model-provided box to `(x1, y1, x2, y2)` floats."""
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "numpy"):
+        value = value.numpy()
+
+    try:
+        coords = np.asarray(value, dtype=np.float32).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Bounding box must contain numeric coordinates") from exc
+    if coords.size < 4:
+        raise ValueError("Bounding box must contain at least four coordinates")
+
+    x1, y1, x2, y2 = coords[:4]
+    return float(x1), float(y1), float(x2), float(y2)

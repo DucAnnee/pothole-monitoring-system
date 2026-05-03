@@ -1,2 +1,4 @@
 benchmarks/results/
-
+local_storage/images/
+local_storage/metadata/
+mlops/dist/

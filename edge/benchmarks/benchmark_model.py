@@ -8,7 +8,6 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from hashlib import sha256
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -26,6 +25,7 @@ from benchmarks.report import (  # noqa: E402
     write_summary_markdown,
 )
 from benchmarks.telemetry import NvidiaSmiTelemetry, TelemetryLogger  # noqa: E402
+from mlops.artifacts import sha256_file  # noqa: E402
 from segmentation.pothole_segmenter import (  # noqa: E402
     PotholeSegmenter,
     RFDETRSegmenter,
@@ -298,9 +298,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--confidence", type=float, help="Override confidence threshold"
     )
-    parser.add_argument("--frame-interval", type=int, default=1)
-    parser.add_argument("--warmup-frames", type=int, default=30)
-    parser.add_argument("--max-frames", type=int, default=300)
+    parser.add_argument("--frame-interval", type=_positive_int, default=1)
+    parser.add_argument("--warmup-frames", type=_non_negative_int, default=30)
+    parser.add_argument("--max-frames", type=_positive_int, default=300)
     parser.add_argument("--imgsz", type=int, help="Ultralytics YOLO inference size")
     parser.add_argument(
         "--device",
@@ -691,14 +691,6 @@ def parse_resize(value: Optional[str]) -> Optional[Tuple[int, int]]:
     return width, height
 
 
-def sha256_file(path: Path) -> str:
-    digest = sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def run_git(args: List[str]) -> str:
     try:
         completed = subprocess.run(
@@ -735,6 +727,20 @@ def _synchronize_cuda() -> None:
 def _slug(value: object) -> str:
     text = str(value).strip().lower()
     return "".join(ch if ch.isalnum() else "-" for ch in text).strip("-")
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return parsed
+
+
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be zero or a positive integer")
+    return parsed
 
 
 if __name__ == "__main__":

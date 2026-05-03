@@ -6,9 +6,6 @@
 # Model selection: "yolo" | "rfdetr"
 model_type: "yolo"
 
-# Monitor window toggle
-enable_monitoring: true
-
 # Models settings
 models: 
   yolo:
@@ -17,6 +14,28 @@ models:
   rfdetr:
     weights_path: "models/rfdetr.pth"
     confidence_threshold: 0.25
+
+# MLOps model lifecycle.
+# On startup, main.py can fetch the latest stable manifest, verify the artifact,
+# deploy it into the local registry, and load the active registered model.
+mlops:
+  model_registry:
+    enabled: true
+    registry_path: "mlops/model_registry.json"
+    fallback_to_config: true
+  model_update:
+    enabled: true
+    stable_manifest_uri: "${STABLE_MODEL_MANIFEST_URI:https://github.com/DucAnnee/pothole-monitoring-system/releases/latest/download/manifest.json}"
+    manifest_signature:
+      required: true
+      public_key_path: ".conf/model_manifest_public_key.pub"
+      key_id: "edge-model-release-v1"
+    staging_dir: "models/staging"
+    artifacts_dir: "models/artifacts"
+    timeout_seconds: 30
+    fail_on_error: false
+    operator: "edge-startup"
+    reason: "Startup stable model update"
 
 # Detection region mask
 detection_region:
@@ -37,6 +56,7 @@ bev_calibration:
 
 # Camera calibration
 camera:
+  device_index: 0
   calibration_file: ".conf/camera_calibration.json"
 
 # Output directories
@@ -53,11 +73,25 @@ processing:
   enable_display: true  # Show real-time visualization window
   display_window_name: "Pothole Segmentation"
 
+# Pipeline event logging.
+logging:
+  level: "INFO"
+  file_enabled: true
+  file_path: "logs/edge_pipeline.log"
+  terminal_output: true
+
+# Suppress repeated uploads for the same pothole across nearby frames.
+deduplication:
+  enabled: true
+  iou_threshold: 0.5
+  max_age_frames: 15
+
 # Kafka configuration
 kafka:
   topic: "pothole.raw.events.v2"
   bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
   schema_registry_url: "http://localhost:8082"
+  delivery_timeout: 10
   max_retries: 5
   retry_delay: 2
 

@@ -91,7 +91,7 @@ segmenter = PotholeSegmenter.create(
 
 **YOLOSegmenter:**
 - Uses Ultralytics YOLO segmentation models
-- Returns masks as contour coordinates (N, 2)
+- Returns model outputs with contour mask, confidence, and bounding box
 - Dependency: `ultralytics`
 
 **RFDETRSegmenter:**
@@ -100,9 +100,10 @@ segmenter = PotholeSegmenter.create(
 - Dependency: `rfdetr`
 
 **Key Methods:**
-- `segment(frame_rgb)`: Returns list of (mask_coords, confidence) tuples
+- `segment(frame_rgb)`: Returns `SegmentedPothole` items with mask, confidence, and model-provided bbox
 - `create_masked_image(frame_rgb)`: Applies trapezoid ROI masking
 - `pothole_in_trapezoid(mask, frame_shape)`: Filters detections outside ROI
+- `DetectionDeduplicator.deduplicate(...)`: Suppresses recent duplicate boxes with IoU matching
 
 ### Uploader Module
 
@@ -162,8 +163,8 @@ Located in [`uploader.py`](./uploader.py), handles all cloud interactions and of
 
 **Offline Mode:**
 - Automatically triggered on upload failure
-- Stores images to `local/images/`
-- Stores metadata to `local/metadata/`
+- Stores images to `local_storage/images/`
+- Stores metadata to `local_storage/metadata/`
 - Periodic connection health checks
 - Automatic recovery and backlog processing
 
@@ -218,12 +219,42 @@ models:
     weights_path: "models/rfdetr.pth"
     confidence_threshold: 0.25
 
+# Model lifecycle
+mlops:
+  model_registry:
+    enabled: true
+    registry_path: "mlops/model_registry.json"
+    fallback_to_config: true
+  model_update:
+    enabled: true
+    stable_manifest_uri: "${STABLE_MODEL_MANIFEST_URI:https://github.com/DucAnnee/pothole-monitoring-system/releases/latest/download/manifest.json}"
+    manifest_signature:
+      required: true
+      public_key_path: ".conf/model_manifest_public_key.pub"
+      key_id: "edge-model-release-v1"
+    staging_dir: "models/staging"
+    artifacts_dir: "models/artifacts"
+    timeout_seconds: 30
+    fail_on_error: false
+
 # Processing parameters
 processing:
   frame_interval: 3  # Process every Nth frame
+  enable_display: true
+  display_window_name: "Pothole Segmentation"
 
-# Monitoring
-enable_monitoring: true
+# Pipeline event logging
+logging:
+  level: "INFO"
+  file_enabled: true
+  file_path: "logs/edge_pipeline.log"
+  terminal_output: true
+
+# Deduplication
+deduplication:
+  enabled: true
+  iou_threshold: 0.5
+  max_age_frames: 15
 
 # Detection region (normalized coordinates 0-1)
 detection_region:
@@ -238,6 +269,7 @@ kafka:
   topic: "pothole.raw.events.v1"
   bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
   schema_registry_url: "http://localhost:8082"
+  delivery_timeout: 10
 
 # MinIO configuration
 minio:
@@ -261,8 +293,11 @@ gps:
 ### Command Line
 
 ```bash
-# Use default config and test video
+# Use default config and camera device 0
 python main.py
+
+# Run against the sample test video
+python main.py --video assets/test.mp4
 
 # Custom config
 python main.py --config custom_config.yaml
@@ -272,6 +307,9 @@ python main.py --video path/to/video.mp4
 
 # Both custom
 python main.py --config custom.yaml --video test.mp4
+
+# Disable terminal logs while keeping file logs enabled
+python main.py --no-terminal-output
 ```
 
 ### Programmatic
@@ -282,7 +320,8 @@ from main import EdgePipeline
 # Initialize
 pipeline = EdgePipeline(
     config_path="config.yaml",
-    video_path="assets/test.mp4"
+    video_path="assets/test.mp4",
+    terminal_output=True,
 )
 
 # Start processing
@@ -298,13 +337,15 @@ pipeline.stop()
 
 1. Load and validate configuration (`config_loader.py`)
 2. Generate unique vehicle ID
-3. Initialize detection queue (maxsize=100)
-4. Initialize segmentation model (YOLO or RF-DETR)
-5. Initialize uploader (connect to Kafka + MinIO)
-6. Check online/offline status
-7. Start inference worker thread (daemon)
-8. Start uploading worker thread (daemon)
-9. Enter monitoring loop with 30s stats reporting
+3. Optionally fetch, signature-verify, smoke-load, and deploy the configured stable model manifest
+4. Resolve the runtime model from the registry or config fallback
+5. Initialize detection queue (maxsize=100)
+6. Initialize segmentation model (YOLO or RF-DETR)
+7. Initialize uploader (connect to Kafka + MinIO)
+8. Check online/offline status
+9. Start inference worker thread (daemon)
+10. Start uploading worker thread (daemon)
+11. Enter monitoring loop with 30s stats reporting
 
 ### Shutdown Sequence
 
@@ -402,7 +443,8 @@ pip install -r requirements.txt
 
 **Project Modules:**
 - `config_loader`: Configuration management with env var substitution
-- `segmentation`: Model abstraction and inference
+- `pipeline_logger`: Shared pipeline event logger
+- `segmentation`: Model abstraction, inference, and IoU deduplication
 - `uploader`: Cloud upload and offline storage
 - `data_models`: Data structures (DetectionData, BundledData, DetectionMask)
 
@@ -471,7 +513,7 @@ ls -la models/yolo11s.pt  # or models/rfdetr.pth
 **Solutions:**
 - Verify X11/Wayland display server is running
 - Check `DISPLAY` environment variable
-- Set `enable_monitoring: false` in config for headless mode
+- Set `processing.enable_display: false` in config for headless mode
 - Install full OpenCV: `pip install opencv-python` (not `opencv-python-headless`)
 
 ### Memory Leaks
@@ -481,7 +523,7 @@ ls -la models/yolo11s.pt  # or models/rfdetr.pth
 **Solutions:**
 1. Check queue is being consumed (queue depth should fluctuate)
 2. Verify frames are released after processing
-3. Monitor `local/` directory size (offline storage)
+3. Monitor `local_storage/` directory size (offline storage)
 4. Restart pipeline periodically if needed
 
 ## File Structure
@@ -499,9 +541,10 @@ edge/
 ├── models/                      # Model weights (gitignored)
 │   ├── yolo11s.pt
 │   └── rfdetr.pth
-├── local/                       # Offline storage (auto-created)
+├── local_storage/               # Offline storage (auto-created)
 │   ├── images/                  # Stored frames
 │   └── metadata/                # Detection metadata JSON
+├── mlops/                       # Model registry, manifest, and updater tools
 └── README.md                    # This file
 ```
 
