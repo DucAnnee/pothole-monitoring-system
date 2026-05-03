@@ -85,6 +85,7 @@ htmlcov/
 *.pth
 *.pt
 *.onnx
+*.onnx.data
 *.engine
 *.h5
 *.keras
@@ -122,6 +123,5 @@ tmp/
 temp/
 
 **/CLAUDE.md
-**/*.claude/
+**/.claude/
 **/*.draft.md
-/.claude

@@ -48,11 +48,15 @@ def export(weights_path: str, model_type: str, output_path: str) -> None:
     dummy = torch.zeros(1, 3, INPUT_SIZE, INPUT_SIZE, device=device)
 
     print(f"[INFO] Exporting to {output_path} ...")
+    # dynamo=False forces the legacy TorchScript exporter which correctly propagates
+    # dynamic_axes through the output; torch 2.9's default onnxscript exporter
+    # concretizes the output batch dim to 1.
     torch.onnx.export(
         model,
         dummy,
         output_path,
-        opset_version=17,
+        dynamo=False,
+        opset_version=18,
         input_names=["input"],
         output_names=["depth_map"],
         dynamic_axes={
