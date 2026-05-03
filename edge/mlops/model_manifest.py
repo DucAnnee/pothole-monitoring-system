@@ -97,6 +97,9 @@ def write_manifest(manifest: Dict[str, Any], path: str | Path) -> None:
 
 def validate_manifest(manifest: Dict[str, Any]) -> Dict[str, Any]:
     """Validate the fields the edge updater must trust before deployment."""
+    if not isinstance(manifest, dict):
+        raise ManifestError("Manifest root must be an object")
+
     required = [
         "schema_version",
         "model_id",
@@ -124,17 +127,25 @@ def validate_manifest(manifest: Dict[str, Any]) -> Dict[str, Any]:
         raise ManifestError("model_id must be a non-empty string")
     if not _is_non_empty_string(manifest["artifact_name"]):
         raise ManifestError("artifact_name must be a non-empty string")
+    if not _is_non_empty_string(manifest["min_edge_version"]):
+        raise ManifestError("min_edge_version must be a non-empty string")
 
     digest = str(manifest["artifact_sha256"])
     if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
         raise ManifestError("artifact_sha256 must be a 64-character hex digest")
 
-    if int(manifest["artifact_size_bytes"]) <= 0:
+    artifact_size = _coerce_int(
+        manifest["artifact_size_bytes"],
+        "artifact_size_bytes",
+    )
+    if artifact_size <= 0:
         raise ManifestError("artifact_size_bytes must be greater than 0")
 
-    threshold = float(manifest["confidence_threshold"])
+    threshold = _coerce_float(manifest["confidence_threshold"], "confidence_threshold")
     if threshold < 0 or threshold > 1:
         raise ManifestError("confidence_threshold must be between 0 and 1")
+
+    _validate_iso_datetime(manifest["created_at_utc"], "created_at_utc")
 
     if SIGNATURE_FIELD in manifest:
         _validate_signature_metadata(manifest[SIGNATURE_FIELD])
@@ -148,6 +159,32 @@ def _utc_now() -> str:
 
 def _is_non_empty_string(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def _coerce_int(value: Any, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ManifestError(f"{field_name} must be an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    raise ManifestError(f"{field_name} must be an integer")
+
+
+def _coerce_float(value: Any, field_name: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ManifestError(f"{field_name} must be a number") from exc
+
+
+def _validate_iso_datetime(value: Any, field_name: str) -> None:
+    if not _is_non_empty_string(value):
+        raise ManifestError(f"{field_name} must be a non-empty string")
+    try:
+        datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ManifestError(f"{field_name} must be an ISO 8601 timestamp") from exc
 
 
 def _validate_signature_metadata(signature: Any) -> None:

@@ -135,6 +135,7 @@ class ModelRegistry:
             raise RegistryError(
                 f"model_id already exists: {model_id}. Use --replace to update it."
             )
+
         if model_id in models and payload.get("active_model_id") == model_id:
             raise RegistryError(
                 "Cannot replace the active model in place. Register a new model_id "
@@ -148,6 +149,7 @@ class ModelRegistry:
         now = _utc_now()
         previous = models.get(model_id, {})
         was_active = payload.get("active_model_id") == model_id
+
         model = ModelVersion(
             model_id=model_id,
             model_type=model_type,
@@ -306,14 +308,17 @@ class ModelRegistry:
             source=source,
             rollback_of_deployment_id=rollback_of_deployment_id,
         )
+
         payload["deployment_history"].append(asdict(deployment))
         payload["active_deployment_id"] = deployment.deployment_id
+
         return payload
 
     def _find_rollback_target(
         self, payload: Dict[str, Any], deployment_id: Optional[str]
     ) -> Dict[str, Any]:
         deployments = payload.get("deployment_history", [])
+
         if deployment_id:
             for deployment in deployments:
                 if deployment.get("deployment_id") == deployment_id:
@@ -332,6 +337,7 @@ class ModelRegistry:
         self, payload: Dict[str, Any], model_id: str
     ) -> Dict[str, Any]:
         models = payload.get("models", {})
+
         if model_id not in models:
             raise RegistryError(f"Unknown model_id: {model_id}")
 

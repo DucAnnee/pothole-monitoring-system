@@ -1,3 +1,5 @@
+"""Publish a generated edge model package locally or to GitHub Releases."""
+
 from __future__ import annotations
 
 import argparse
@@ -41,6 +43,7 @@ def main() -> None:
     args = parse_args()
     try:
         package = load_package(args.package_dir)
+
         if args.target == "local":
             result = publish_local(package, args.output_dir)
         else:
@@ -126,6 +129,7 @@ def publish_github_release(
         text=True,
         check=False,
     )
+
     if view.returncode == 0:
         command = ["gh", "release", "upload", tag, *files, "--repo", repo]
         if args.clobber:

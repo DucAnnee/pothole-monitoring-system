@@ -51,6 +51,7 @@ def generate_keypair(
 
     private_path = Path(private_key_path)
     public_path = Path(public_key_path)
+
     if not force:
         for path in (private_path, public_path):
             if path.exists():

@@ -7,13 +7,22 @@ from pathlib import Path
 from typing import Any, Dict
 
 from .manifest_signature import SignatureError, sign_manifest
-from .model_manifest import ManifestError, create_manifest, write_manifest
+from .model_manifest import (
+    ManifestError,
+    SUPPORTED_MODEL_TYPES,
+    create_manifest,
+    write_manifest,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate an edge model manifest")
     parser.add_argument("--model-id", required=True)
-    parser.add_argument("--model-type", choices=["yolo", "rfdetr"], required=True)
+    parser.add_argument(
+        "--model-type",
+        choices=sorted(SUPPORTED_MODEL_TYPES),
+        required=True,
+    )
     parser.add_argument("--artifact-path", required=True)
     parser.add_argument("--confidence-threshold", type=float, required=True)
     parser.add_argument("--output")
@@ -59,7 +68,9 @@ def main() -> None:
             if args.benchmark_summary:
                 benchmark = Path(args.benchmark_summary)
                 if not benchmark.exists():
-                    raise ManifestError(f"Benchmark summary does not exist: {benchmark}")
+                    raise ManifestError(
+                        f"Benchmark summary does not exist: {benchmark}"
+                    )
                 packaged_summary = package_dir / benchmark.name
                 if benchmark.resolve() != packaged_summary.resolve():
                     shutil.copy2(benchmark, packaged_summary)
@@ -79,16 +90,19 @@ def main() -> None:
             tags=_parse_tags(args.tags),
             metadata=metadata,
         )
+
         if args.signing_key:
             manifest = sign_manifest(
                 manifest,
                 args.signing_key,
                 key_id=args.signature_key_id,
             )
+
         write_manifest(manifest, output_path)
         print(f"Generated manifest for {manifest['model_id']}: {output_path}")
         if args.signing_key:
             print(f"Signed manifest with key_id={manifest['signature']['key_id']}")
+
     except (ManifestError, OSError, SignatureError) as exc:
         raise SystemExit(f"Manifest error: {exc}") from exc
 
@@ -105,9 +119,12 @@ def _load_metadata(path: str | None) -> Dict[str, Any]:
     if not path:
         return {}
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
+        metadata = json.loads(Path(path).read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ManifestError(f"Invalid metadata JSON: {path}") from exc
+    if not isinstance(metadata, dict):
+        raise ManifestError(f"Metadata JSON must contain an object: {path}")
+    return metadata
 
 
 def _parse_tags(value: str) -> list[str]:

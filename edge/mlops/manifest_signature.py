@@ -42,6 +42,7 @@ def verify_manifest_signature(
 ) -> None:
     """Verify a manifest signature with the pinned Ed25519 public key."""
     signature = manifest.get(SIGNATURE_FIELD)
+
     if signature is None:
         if require_signature:
             raise SignatureError("Manifest is unsigned")
@@ -97,12 +98,14 @@ def public_key_fingerprint(public_key: Any) -> str:
 
 
 def _unsigned_manifest(manifest: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of the manifest with the signature field removed."""
     unsigned = dict(manifest)
     unsigned.pop(SIGNATURE_FIELD, None)
     return unsigned
 
 
 def _load_private_key(path: str | Path) -> Any:
+    """Load an Ed25519 private key from a PEM file."""
     serialization = _crypto_serialization()
     try:
         key = serialization.load_pem_private_key(
@@ -119,6 +122,7 @@ def _load_private_key(path: str | Path) -> Any:
 
 
 def _load_public_key(path: str | Path) -> Any:
+    """Load an Ed25519 public key from a PEM file."""
     serialization = _crypto_serialization()
     try:
         key = serialization.load_pem_public_key(Path(path).read_bytes())
@@ -132,6 +136,7 @@ def _load_public_key(path: str | Path) -> Any:
 
 
 def _crypto_serialization() -> Any:
+    """Import cryptography serialization primitives."""
     try:
         from cryptography.hazmat.primitives import serialization
     except ImportError as exc:
@@ -143,6 +148,7 @@ def _crypto_serialization() -> Any:
 
 
 def _crypto_ed25519() -> Any:
+    """Import cryptography Ed25519 primitives."""
     try:
         from cryptography.hazmat.primitives.asymmetric import ed25519
     except ImportError as exc:
