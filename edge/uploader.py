@@ -196,7 +196,7 @@ class Uploader:
                     frame_id=detection.frame_id,
                     timestamp=detection.timestamp,
                     frame=detection.frame,
-                    conf=mask.conf,
+                    confidence=mask.conf,
                     coordinates=mask.coordinates,
                 )
                 bundled_list.append(bundled)
@@ -241,7 +241,7 @@ class Uploader:
                 "gps_accuracy": random.uniform(5.0, 15.0),
                 "raw_image_object_key": raw_s3_path,
                 "original_mask": bundled.coordinates,
-                "detection_confidence": bundled.conf,
+                "detection_confidence": bundled.confidence,
             }
 
             # Serialize and produce to Kafka
@@ -365,7 +365,7 @@ class Uploader:
                 "event_id": bundled.event_id,
                 "frame_id": bundled.frame_id,
                 "timestamp": bundled.timestamp.isoformat(),
-                "conf": bundled.conf,
+                "confidence": bundled.confidence,
                 "coordinates": bundled.coordinates,
             }
 
@@ -422,7 +422,7 @@ class Uploader:
                     frame_id=metadata["frame_id"],
                     timestamp=datetime.fromisoformat(metadata["timestamp"]),
                     frame=frame,
-                    conf=metadata["conf"],
+                    confidence=metadata["conf"],
                     coordinates=metadata["coordinates"],
                 )
 

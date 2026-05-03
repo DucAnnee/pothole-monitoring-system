@@ -85,5 +85,5 @@ class BundledData:
     frame_id: str
     timestamp: datetime
     frame: np.ndarray  # original RGB image
-    conf: float
+    confidence: float
     coordinates: list[list[float]]
