@@ -1,0 +1,26 @@
+kafka:
+  source_topic: "pothole.raw.events.v2"
+  output_topic: "pothole.surface.area.v2"
+  consumer_group_id: "bev-surface-service-e2e"
+  bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}"
+  schema_registry_url: "${SCHEMA_REGISTRY_URL:http://localhost:8082}"
+
+minio:
+  endpoint: "${MINIO_ENDPOINT:localhost:9000}"
+  access_key: "${MINIO_ACCESS_KEY:minioadmin}"
+  secret_key: "${MINIO_SECRET_KEY:minioadmin}"
+  bucket: "${MINIO_BUCKET:warehouse}"
+  secure: false
+
+bev:
+  trapezoid_coords:
+    - [0.4034, 0.5731]
+    - [0.5081, 0.5796]
+    - [0.6456, 0.7972]
+    - [0.3268, 0.7843]
+  rectangle_coords:
+    - [0, 1000]
+    - [250, 1000]
+    - [250, 0]
+    - [0, 0]
+  calibration_file: "edge/.conf/camera_calibration.json"

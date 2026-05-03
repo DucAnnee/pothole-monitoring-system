@@ -1,0 +1,22 @@
+kafka:
+  bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}"
+  schema_registry_url: "${SCHEMA_REGISTRY_URL:http://localhost:8082}"
+  consumer_group_id: "severity-aggregator-e2e"
+  depth_topic: "pothole.depth.v1"
+  output_topic: "pothole.severity.score.v1"
+  max_retries: 5
+  retry_delay: 2
+
+severity:
+  area_weight: 0.6
+  depth_weight: 0.4
+  min_score: 1
+  max_score: 10
+  thresholds:
+    minor_max: 3.25
+    moderate_max: 5.5
+    high_max: 7.75
+
+logging:
+  level: "INFO"
+  log_timeout_warnings: true

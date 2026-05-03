@@ -1,0 +1,25 @@
+kafka:
+  bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}"
+  schema_registry_url: "${SCHEMA_REGISTRY_URL:http://localhost:8082}"
+  consumer_group_id: "pothole-iceberg-etl-e2e"
+  dlq_suffix: ".dlq"
+
+polaris:
+  url: "${POLARIS_URL:http://localhost:8181/api/catalog/}"
+  credentials: "${POLARIS_CREDENTIALS:root:s3cr3t}"
+  warehouse: "warehouse"
+  catalog_name: "iceberg"
+  namespace: "city"
+
+trino:
+  host: "${TRINO_HOST:localhost}"
+  port: "${TRINO_PORT:8081}"
+  user: "trino"
+  catalog: "iceberg"
+
+batching:
+  batch_size: "${BATCH_SIZE:1}"
+  batch_timeout_seconds: "${BATCH_TIMEOUT_SECONDS:3}"
+
+logging:
+  level: "INFO"
