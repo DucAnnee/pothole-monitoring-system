@@ -35,10 +35,13 @@ def test_upload_worker_drains_queue_after_inference_stops(repo_root, load_module
             self.uploaded.append(enriched)
             return True
 
+    import logging
+
     pipeline = object.__new__(module.EdgePipeline)
     pipeline.running = False
     pipeline.detection_queue = queue.Queue()
     pipeline.uploader = DummyUploader()
+    pipeline.logger = logging.getLogger("test")
     pipeline.detection_queue.put(
         data_models.DetectionData(
             frame_id="frame_000001",

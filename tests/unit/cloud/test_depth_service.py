@@ -25,7 +25,7 @@ def test_depth_input_schema_uses_surface_area_v2(repo_root, schema_constant):
 
 @pytest.mark.unit
 def test_download_image_parses_s3_and_plain_keys(repo_root, load_module):
-    pytest.importorskip("torch")
+    pytest.importorskip("tritonclient")
     module = load_module(
         "depth_pipeline_unit",
         repo_root / "cloud" / "depth_estimation_model" / "cloud_pipeline.py",
