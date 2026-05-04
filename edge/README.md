@@ -8,9 +8,12 @@ The edge pipeline implements a multi-threaded architecture that:
 1. Processes video frames or camera feed to detect potholes using YOLO or RF-DETR segmentation models
 2. Queues detections in memory for asynchronous processing
 3. Bundles detection data with metadata (GPS, timestamps, confidence scores)
-4. Uploads to cloud services (Kafka + MinIO S3)
+4. Uploads raw images to MinIO and publishes `pothole.raw.events.v2`
 5. Handles offline scenarios with persistent local storage
 6. Provides real-time visualization with OpenCV
+
+The active edge contract is raw v2 only. BEV transformation and surface-area
+calculation are handled downstream by `cloud/bev_surface_service`.
 
 ## Architecture
 
@@ -266,7 +269,7 @@ detection_region:
 
 # Kafka configuration
 kafka:
-  topic: "pothole.raw.events.v1"
+  topic: "pothole.raw.events.v2"
   bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
   schema_registry_url: "http://localhost:8082"
   delivery_timeout: 10

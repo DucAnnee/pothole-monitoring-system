@@ -130,3 +130,12 @@ CLAUDE.md
 **/.claude/
 **/*.draft.md
 docs/superpowers/
+dashboard-ui-reference/
+
+AGENTS.md
+.codex/
+
+graphify-out/
+.graphify*
+
+*.zip

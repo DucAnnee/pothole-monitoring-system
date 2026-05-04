@@ -1,119 +1,121 @@
-# 🕳️ Pothole Monitoring Dashboard
+# Pothole Monitoring System
 
-This repository contains the **Next.js web application** for our **Pothole Monitoring System** — a city-scale platform that visualizes road surface conditions detected by stereo camera sensors on public buses.
+Hybrid edge-cloud platform for detecting potholes from bus-mounted cameras,
+estimating physical severity, deduplicating detections geospatially, and
+displaying the resulting road-defect state in a web dashboard.
 
-The dashboard provides:
+## Current Pipeline
 
-* **Interactive heatmaps** of road health and pothole density
-* **Detailed event information** (location, severity, timestamp, etc.)
-* **REST APIs** to serve map tiles, metadata, and analytics for other services
-
----
-
-## 🚀 Overview
-
-Our end-to-end system processes pothole detections from edge devices mounted on buses:
-
-1. **Edge tier:** Stereo cameras and embedded processors detect and segment potholes.
-2. **Cloud tier:** Data is ingested, processed (BEV transform & severity classification), and stored.
-3. **Dashboard tier (this project):** Displays a live, reliable overview of the aggregated results.
-
-This web app is built with **Next.js** (App Router) and includes **basic REST APIs** for fetching processed pothole data and heatmap tiles from the backend.
-
----
-
-## 🧩 Tech Stack
-
-* **Framework:** [Next.js](https://nextjs.org) (React + TypeScript)
-* **Styling:** Tailwind CSS
-* **Map Visualization:** MapLibre GL / Deck.GL
-* **APIs:** REST endpoints implemented via Next.js API routes
-* **Deployment:** Vercel / Docker
-
----
-
-## 🛠️ Getting Started
-
-### 1. Clone and install dependencies
-
-```bash
-git clone https://github.com/your-org/pothole-monitoring-dashboard.git
-cd pothole-monitoring-dashboard
-npm install --legacy-peer-deps
+```text
+edge
+  -> pothole.raw.events.v2
+  -> cloud/bev_surface_service
+  -> pothole.surface.area.v2
+  -> cloud/depth_estimation_model via Triton
+  -> pothole.depth.v1
+  -> cloud/severity_calculation_service
+  -> pothole.severity.score.v1
+  -> cloud/final_enrichment_service
+  -> iceberg.city.potholes + pothole_history
 ```
 
-### 2. Run the development server
+`graphify-out/GRAPH_REPORT.md` identifies the core graph hubs as
+`ConfigLoader`, `EdgePipeline`, `ModelRegistry`, `Uploader`, `log_event()`, and
+the cloud microservice pipeline.
+
+## Repository Map
+
+| Path | Purpose |
+|---|---|
+| `edge/` | Edge camera pipeline, segmentation, MinIO/Kafka upload, offline replay, MLOps model updater. |
+| `cloud/bev_surface_service/` | Cloud-side BEV transform, mask projection, surface area calculation. |
+| `cloud/depth_estimation_model/` | Depth service; batches image tensors and calls Triton gRPC. |
+| `cloud/triton_inference_server/` | Triton model repository and deployment notes for Depth-Anything-V2 ONNX. |
+| `cloud/severity_calculation_service/` | Stateless depth+area severity scoring. |
+| `cloud/final_enrichment_service/` | Raw+severity aggregation, H3 dedup, OSM geocoding, Iceberg writes. |
+| `cloud/etl_service/` | Kafka-to-Iceberg ingestion for raw, surface area, and severity topics. |
+| `web/` | Current React Router 7 + Vite web application and server-side API routes. |
+| `dashboard/`, `dashboard-backend/` | Legacy/reference dashboard surfaces. |
+| `tests/` | Contract and E2E tests for schemas, topics, services, and pipeline behavior. |
+| `graphify-out/` | Knowledge graph report, graph JSON, and HTML visualization. |
+
+## Data Contracts
+
+Authoritative docs:
+
+- `PIPELINE.md` - active event flow
+- `KAFKA-CONF.md` - Avro schemas and Kafka topic configuration
+- `SCHEMA.md` - Iceberg table schemas
+- `tests/contract/test_schema_contracts.py` - schema compatibility checks
+- `tests/contract/test_topic_contracts.py` - topic creation checks
+
+The current Kafka chain is:
+
+| Topic | Role |
+|---|---|
+| `pothole.raw.events.v2` | Raw edge event with raw image key and original mask. |
+| `pothole.surface.area.v2` | BEV image/mask and surface area from cloud BEV service. |
+| `pothole.depth.v1` | Depth estimate plus surface area passthrough. |
+| `pothole.severity.score.v1` | Final per-event severity score and level. |
+
+## Quick Start
+
+Start infrastructure:
 
 ```bash
+docker compose up -d
+```
+
+Run cloud services:
+
+```bash
+python cloud/etl_service/etl_microservice.py
+python cloud/bev_surface_service/bev_surface_service.py
+python cloud/depth_estimation_model/cloud_pipeline.py
+python cloud/severity_calculation_service/severity_aggregator.py
+python cloud/final_enrichment_service/final_enrichment_service.py
+```
+
+Prepare and run Triton:
+
+```bash
+python cloud/depth_estimation_model/export_to_onnx.py
+docker compose up triton-inference-server -d
+curl http://localhost:8000/v2/health/ready
+```
+
+Run the edge pipeline:
+
+```bash
+python edge/main.py
+python edge/main.py --video path/to/video.mp4
+```
+
+Run the current web app:
+
+```bash
+cd web
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
 ```
 
-Then open [http://localhost:3000](http://localhost:3000) to view the dashboard.
-
----
-
-## 📁 Project Structure
-
-```
-pothole-monitoring-dashboard/
-├── app/                # Next.js App Router pages and layouts
-├── components/         # UI and map components
-├── public/             # Static assets
-├── styles/             # Tailwind styles and globals
-├── pages/api/          # REST API endpoints
-└── utils/              # Helper modules and constants
-```
-
----
-
-## ⚙️ Environment Variables
-
-Create a `.env.local` file to configure the app:
+## Verification
 
 ```bash
-NEXT_PUBLIC_MAPBOX_TOKEN=<your_map_token>
-API_BASE_URL=<backend_api_url>
+pytest tests/contract
+pytest tests/e2e
 ```
 
----
-
-## 🧭 API Endpoints (examples)
-
-| Endpoint           | Description                                              |
-| ------------------ | -------------------------------------------------------- |
-| `/api/heatmap`     | Get aggregated pothole density and severity per map tile |
-| `/api/events/[id]` | Get detail of a specific pothole event                   |
-| `/api/health`      | System health and version info                           |
-
----
-
-## 🧑‍💻 Development Notes
-
-* The map and analytics automatically update when new data is pushed to the backend.
-* UI components are built to be modular, with hooks for integrating live WebSocket or SSE updates later.
-* Fonts are optimized using [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) with [Geist](https://vercel.com/font).
-
----
-
-## ☁️ Deployment
-
-You can deploy directly on [Vercel](https://vercel.com/new) (recommended) or using Docker:
+After code changes, keep the knowledge graph current:
 
 ```bash
-docker build -t pothole-dashboard .
-docker run -p 3000:3000 pothole-dashboard
+graphify update .
 ```
 
-Once deployed, the dashboard connects automatically to the backend API to serve live data.
+## Current Production Gaps
 
----
-
-## 📚 Learn More
-
-* [Next.js Documentation](https://nextjs.org/docs)
-* [Deck.GL](https://deck.gl) for map visualizations
-* [Vercel Deployment Guide](https://nextjs.org/docs/app/building-your-application/deploying)
+- GPS is simulated and `vehicle_id` is generated at process startup.
+- BEV/depth failures need DLQs and quality flags instead of being treated as ordinary low-severity observations.
+- Final pothole records retain raw image evidence but not enough BEV/model/calibration evidence.
+- Web auth is demo-grade and API routes need production authentication/RBAC.
+- Production deployment assets, secrets, TLS, Kafka ACLs, observability, and backup/restore controls are still future work.
