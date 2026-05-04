@@ -15,6 +15,10 @@
 /.next/
 /out/
 
+# react router
+.react-router/
+build/
+
 # production
 /build
 
@@ -122,6 +126,6 @@ Thumbs.db
 tmp/
 temp/
 
-**/CLAUDE.md
+CLAUDE.md
 **/.claude/
 **/*.draft.md
