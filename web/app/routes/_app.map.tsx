@@ -29,7 +29,10 @@ export const handle = { title: "Pothole Map" };
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireAuth(request);
-  const markers = await cached("web:mapdata:recent", 30, queryMapPotholes);
+  const markers = await cached("web:mapdata:recent", 30, queryMapPotholes).catch((error) => {
+    console.warn("[Trino] map data unavailable:", error instanceof Error ? error.message : error);
+    return [] as PotholeMarker[];
+  });
   return { markers };
 }
 

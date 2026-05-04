@@ -142,6 +142,32 @@ export interface LatencyStats {
   total_pipeline: { avg_ms: number; p50_ms: number; p95_ms: number; p99_ms: number; min_ms: number; max_ms: number };
 }
 
+export function emptySummaryData(): SummaryData {
+  const now = new Date();
+  return {
+    activePotholes: {
+      count: 0,
+      trend: {
+        today: { count: 0, comparison: "+0 vs yesterday" },
+        thisWeek: { count: 0, comparison: "+0 last week" },
+      },
+    },
+    averageSeverity: 0,
+    inProgress: 0,
+    activePotholesLast30Days: Array.from({ length: 30 }, (_, i) => {
+      const d = new Date(now.getTime() - (29 - i) * 86400000);
+      return { date: d.toISOString().split("T")[0], count: 0 };
+    }),
+    severityDistribution: { MINOR: 0, MODERATE: 0, HIGH: 0, CRITICAL: 0 },
+    statusChanges: {
+      reportedToInProgress: { thisWeek: 0, comparison: "+0 last week" },
+      inProgressToFixed: { thisWeek: 0, comparison: "+0 last week" },
+    },
+    recentCritical: [],
+    topDistricts: [],
+  };
+}
+
 export async function querySummary(): Promise<SummaryData> {
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);

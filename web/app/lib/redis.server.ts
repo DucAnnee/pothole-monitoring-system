@@ -7,11 +7,15 @@ function getClient(): Redis {
     client = new Redis({
       host: process.env.REDIS_HOST ?? "localhost",
       port: parseInt(process.env.REDIS_PORT ?? "6379"),
-      retryStrategy: (times) => (times > 3 ? null : Math.min(times * 200, 2000)),
+      connectTimeout: 500,
+      commandTimeout: 1000,
+      maxRetriesPerRequest: 1,
+      retryStrategy: (times) => (times > 1 ? null : 200),
       lazyConnect: true,
     });
-    client.on("error", (err: Error) => {
-      console.error("[Redis]", err.message);
+    client.on("error", (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[Redis] unavailable:", message);
     });
   }
   return client;

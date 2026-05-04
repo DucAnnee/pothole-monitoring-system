@@ -14,7 +14,10 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const markers = await cached(key, 30, () =>
     hasCoords ? queryMapPotholes(lat, lon, 1) : queryMapPotholes()
-  );
+  ).catch((error) => {
+    console.warn("[Trino] map data API unavailable:", error instanceof Error ? error.message : error);
+    return [];
+  });
 
   return Response.json({ markers });
 }

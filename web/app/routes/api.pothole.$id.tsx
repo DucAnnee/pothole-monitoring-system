@@ -4,7 +4,10 @@ import { queryPotholeDetail } from "~/lib/trino.server";
 export async function loader({ params }: Route.LoaderArgs) {
   const { id } = params;
   if (!id) return new Response("Missing id", { status: 400 });
-  const detail = await queryPotholeDetail(id);
+  const detail = await queryPotholeDetail(id).catch((error) => {
+    console.warn("[Trino] pothole detail unavailable:", error instanceof Error ? error.message : error);
+    return null;
+  });
   if (!detail) return new Response("Not found", { status: 404 });
   return Response.json(detail);
 }
