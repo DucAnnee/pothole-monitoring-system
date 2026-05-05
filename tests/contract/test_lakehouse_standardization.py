@@ -237,6 +237,7 @@ def test_lakehouse_bootstrap_script_submits_standard_jobs(repo_root: Path):
         "polaris-setup",
         "wait-containerhealthy",
         "wait-containercompleted",
+        "wait-flinkjobcountincrease",
         "use catalog lakehouse",
         "/tmp/pothole-lakehouse-",
         'if ($filename -ne "010_kafka_to_bronze.sql")',

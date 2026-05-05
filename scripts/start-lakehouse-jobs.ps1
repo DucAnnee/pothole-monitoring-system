@@ -100,6 +100,29 @@ function Test-RunningFlinkJobs {
     return @($overview.jobs | Where-Object { $_.state -in $activeStates })
 }
 
+function Wait-FlinkJobCountIncrease {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$PreviousCount,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Label
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $activeJobs = Test-RunningFlinkJobs
+        if ($activeJobs.Count -gt $PreviousCount) {
+            Write-Host "Flink accepted '$Label': active jobs $PreviousCount -> $($activeJobs.Count)"
+            return $activeJobs.Count
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    throw "Timed out after $TimeoutSeconds seconds waiting for Flink to register a new active job for '$Label'. Check /tmp/$Label.log in flink-jobmanager."
+}
+
 function Run-TrinoFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -180,15 +203,17 @@ $flinkJobs = @(
 )
 
 if (-not $AllowDuplicateJobs) {
-    $runningJobs = Test-RunningFlinkJobs
-    if ($runningJobs.Count -gt 0) {
-        $jobSummary = ($runningJobs | ForEach-Object { "$($_.name) [$($_.state)]" }) -join ", "
+    $activeJobs = Test-RunningFlinkJobs
+    if ($activeJobs.Count -gt 0) {
+        $jobSummary = ($activeJobs | ForEach-Object { "$($_.name) [$($_.state)]" }) -join ", "
         throw "Flink already has active jobs: $jobSummary. Stop existing jobs or rerun with -AllowDuplicateJobs for intentional parallel experiments."
     }
 }
 
+$activeJobCount = (Test-RunningFlinkJobs).Count
 foreach ($flinkJob in $flinkJobs) {
     Submit-FlinkSql -FileName $flinkJob
+    $activeJobCount = Wait-FlinkJobCountIncrease -PreviousCount $activeJobCount -Label $flinkJob
 }
 
 Write-Host "Lakehouse streaming jobs submitted. Open the Flink dashboard at http://localhost:8084."
