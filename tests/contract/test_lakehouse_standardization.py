@@ -140,6 +140,34 @@ def test_flink_sql_pins_current_topics_and_medallion_flow(repo_root: Path):
     assert "from gold.current_road_defects" in projection
 
 
+def test_flink_kafka_sources_alias_active_avro_fields(repo_root: Path):
+    sql = read(repo_root / "lakehouse" / "flink" / "sql" / "010_kafka_to_bronze.sql").lower()
+    compact_sql = " ".join(sql.split())
+
+    assert "`timestamp` as event_time" in sql
+    assert "gps_accuracy as gps_accuracy_m" in sql
+    assert "cast(null as string) as device_id" in sql
+    assert "bev_mask as bev_mask_json" in sql
+    assert "cast(original_mask as string) as original_mask_json" in sql
+    assert "select *" not in sql
+    raw_source = sql.split("create temporary table kafka_raw_events", 1)[1].split(") with", 1)[0]
+    assert "`timestamp` timestamp(6)" in raw_source
+    assert "timestamp timestamp(6)" not in raw_source.replace("`timestamp`", "")
+    assert "original_mask array<array<double>>" in raw_source
+    assert "original_mask_json string" not in raw_source
+    assert "device_id string" not in raw_source
+    assert "event_time timestamp" not in raw_source
+    assert "bev_mask_json string" not in sql.split("create temporary table kafka_surface_area_events", 1)[1].split(") with", 1)[0]
+    assert (
+        "insert into bronze.depth_estimation_events ( event_id, depth_cm, confidence, surface_area_cm2, "
+        "processed_at, kafka_topic, kafka_partition, kafka_offset, ingested_at, payload_json ) select"
+    ) in compact_sql
+    assert (
+        "insert into bronze.severity_score_events ( event_id, depth_cm, surface_area_cm2, severity_score, "
+        "severity_level, calculated_at, kafka_topic, kafka_partition, kafka_offset, ingested_at, payload_json ) select"
+    ) in compact_sql
+
+
 def test_compose_declares_streamhouse_and_serving_services(repo_root: Path):
     compose = read(repo_root / "docker-compose.yml").lower()
     for service in [
