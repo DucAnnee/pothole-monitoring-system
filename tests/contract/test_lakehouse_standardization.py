@@ -145,6 +145,14 @@ def test_flink_silver_declares_quality_flag_semantics(repo_root: Path):
     silver = read(flink_dir / "020_silver_materialization.sql").lower()
     gold = read(flink_dir / "030_gold_materialization.sql").lower()
 
+    assert "options('streaming'='true'" in silver
+    assert "monitor-interval" in silver
+    assert "options('streaming'='true'" in gold
+    assert "monitor-interval" in gold
+    assert "insert into gold.current_road_defects" in gold
+    assert "insert into gold.defect_observation_history" in gold
+    assert "group by o.defect_id" not in gold
+
     for flag in [
         "gps_accuracy_missing",
         "model_lineage_missing",
@@ -155,7 +163,7 @@ def test_flink_silver_declares_quality_flag_semantics(repo_root: Path):
     ]:
         assert flag in silver
 
-    assert "max(o.quality_flags_json) as quality_flags_json" in gold
+    assert "o.quality_flags_json as quality_flags_json" in gold
     assert "'[]' as quality_flags_json" not in silver
     assert "d.depth_cm is null and sev.severity_score is null" in silver
     assert "d.depth_cm is null" in silver

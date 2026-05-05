@@ -24,7 +24,7 @@ SELECT
     ELSE '["MODEL_LINEAGE_MISSING","CALIBRATION_LINEAGE_MISSING"]'
   END AS quality_flags_json,
   CURRENT_TIMESTAMP AS created_at
-FROM bronze.raw_detection_events;
+FROM bronze.raw_detection_events /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */;
 
 INSERT INTO silver.defect_evidence
 SELECT
@@ -43,8 +43,8 @@ SELECT
     ELSE '["MODEL_LINEAGE_MISSING","CALIBRATION_LINEAGE_MISSING"]'
   END AS quality_flags_json,
   CURRENT_TIMESTAMP AS created_at
-FROM bronze.raw_detection_events r
-LEFT JOIN bronze.surface_area_events s ON r.event_id = s.event_id;
+FROM bronze.raw_detection_events /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */ r
+LEFT JOIN bronze.surface_area_events /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */ s ON r.event_id = s.event_id;
 
 INSERT INTO silver.observations
 SELECT
@@ -67,7 +67,7 @@ SELECT
     ELSE '[]'
   END AS quality_flags_json,
   CURRENT_TIMESTAMP AS created_at
-FROM bronze.raw_detection_events r
-LEFT JOIN bronze.surface_area_events a ON r.event_id = a.event_id
-LEFT JOIN bronze.depth_estimation_events d ON r.event_id = d.event_id
-LEFT JOIN bronze.severity_score_events sev ON r.event_id = sev.event_id;
+FROM bronze.raw_detection_events /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */ r
+LEFT JOIN bronze.surface_area_events /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */ a ON r.event_id = a.event_id
+LEFT JOIN bronze.depth_estimation_events /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */ d ON r.event_id = d.event_id
+LEFT JOIN bronze.severity_score_events /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */ sev ON r.event_id = sev.event_id;
