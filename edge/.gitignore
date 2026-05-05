@@ -1,4 +1,5 @@
 benchmarks/results/
 local_storage/images/
 local_storage/metadata/
+local_storage/.device_state.json
 mlops/dist/
