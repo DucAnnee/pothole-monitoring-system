@@ -1,5 +1,8 @@
 USE CATALOG lakehouse;
 
+-- Deterministic quality flag JSON keeps the local thesis demo reproducible;
+-- missing model and calibration lineage are explicit flags until registries emit IDs.
+
 INSERT INTO silver.detections
 SELECT
   event_id AS detection_id,
@@ -16,7 +19,10 @@ SELECT
   CAST(NULL AS STRING) AS model_id,
   CAST(NULL AS STRING) AS calibration_id,
   CAST(NULL AS BIGINT) AS h3_cell,
-  '[]' AS quality_flags_json,
+  CASE
+    WHEN gps_accuracy_m IS NULL THEN '["GPS_ACCURACY_MISSING","MODEL_LINEAGE_MISSING","CALIBRATION_LINEAGE_MISSING"]'
+    ELSE '["MODEL_LINEAGE_MISSING","CALIBRATION_LINEAGE_MISSING"]'
+  END AS quality_flags_json,
   CURRENT_TIMESTAMP AS created_at
 FROM bronze.raw_detection_events;
 
@@ -32,7 +38,10 @@ SELECT
   CAST(NULL AS STRING) AS bev_image_sha256,
   CAST(NULL AS STRING) AS model_id,
   CAST(NULL AS STRING) AS calibration_id,
-  '[]' AS quality_flags_json,
+  CASE
+    WHEN s.bev_object_key IS NULL OR s.bev_object_key = '' THEN '["BEV_MISSING","MODEL_LINEAGE_MISSING","CALIBRATION_LINEAGE_MISSING"]'
+    ELSE '["MODEL_LINEAGE_MISSING","CALIBRATION_LINEAGE_MISSING"]'
+  END AS quality_flags_json,
   CURRENT_TIMESTAMP AS created_at
 FROM bronze.raw_detection_events r
 LEFT JOIN bronze.surface_area_events s ON r.event_id = s.event_id;
@@ -51,7 +60,12 @@ SELECT
   sev.severity_level,
   'reported' AS status,
   r.event_id AS evidence_id,
-  '[]' AS quality_flags_json,
+  CASE
+    WHEN d.event_id IS NULL AND sev.event_id IS NULL THEN '["DEPTH_MISSING","SEVERITY_MISSING"]'
+    WHEN d.event_id IS NULL THEN '["DEPTH_MISSING"]'
+    WHEN sev.event_id IS NULL THEN '["SEVERITY_MISSING"]'
+    ELSE '[]'
+  END AS quality_flags_json,
   CURRENT_TIMESTAMP AS created_at
 FROM bronze.raw_detection_events r
 LEFT JOIN bronze.surface_area_events a ON r.event_id = a.event_id

@@ -140,6 +140,25 @@ def test_flink_sql_pins_current_topics_and_medallion_flow(repo_root: Path):
     assert "from gold.current_road_defects" in projection
 
 
+def test_flink_silver_declares_quality_flag_semantics(repo_root: Path):
+    flink_dir = repo_root / "lakehouse" / "flink" / "sql"
+    silver = read(flink_dir / "020_silver_materialization.sql").lower()
+    gold = read(flink_dir / "030_gold_materialization.sql").lower()
+
+    for flag in [
+        "gps_accuracy_missing",
+        "model_lineage_missing",
+        "calibration_lineage_missing",
+        "bev_missing",
+        "depth_missing",
+        "severity_missing",
+    ]:
+        assert flag in silver
+
+    assert "max(o.quality_flags_json) as quality_flags_json" in gold
+    assert "'[]' as quality_flags_json" not in silver
+
+
 def test_flink_kafka_sources_alias_active_avro_fields(repo_root: Path):
     sql = read(repo_root / "lakehouse" / "flink" / "sql" / "010_kafka_to_bronze.sql").lower()
     compact_sql = " ".join(sql.split())
