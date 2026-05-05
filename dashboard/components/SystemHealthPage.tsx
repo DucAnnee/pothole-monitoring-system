@@ -447,10 +447,10 @@ function MicroservicesSection({ latencyData, loading }: { latencyData: LatencyDa
 
   // Fall back to defaults if no data
   const displayServices = services.length > 0 ? services : [
-    { name: 'Edge to Kafka', key: 'edge_to_kafka', icon: Zap, status: 'unknown', latency_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
-    { name: 'Kafka to Storage', key: 'kafka_to_storage', icon: HardDrive, status: 'unknown', latency_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
-    { name: 'Depth Estimation', key: 'depth_estimation', icon: Brain, status: 'unknown', latency_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
-    { name: 'Final Enrichment', key: 'enrichment', icon: Calculator, status: 'unknown', latency_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
+    { name: 'Edge to Kafka', key: 'edge_to_kafka', icon: Zap, status: 'unknown', latency_ms: 0, p95_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
+    { name: 'Kafka to Storage', key: 'kafka_to_storage', icon: HardDrive, status: 'unknown', latency_ms: 0, p95_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
+    { name: 'Depth Estimation', key: 'depth_estimation', icon: Brain, status: 'unknown', latency_ms: 0, p95_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
+    { name: 'Final Enrichment', key: 'enrichment', icon: Calculator, status: 'unknown', latency_ms: 0, p95_ms: 0, uptime: '-', lastCheck: new Date().toISOString() },
   ];
 
   const healthyCount = displayServices.filter((s) => s.status === 'healthy').length;
