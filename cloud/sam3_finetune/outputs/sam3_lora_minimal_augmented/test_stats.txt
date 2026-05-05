@@ -1,0 +1,120 @@
+Applying LoRA configuration...
+Replaced 19 nn.MultiheadAttention modules with MultiheadAttentionLoRA
+Applied LoRA to 57 modules:
+  - transformer.decoder.layers.0.cross_attn.q_proj
+  - transformer.decoder.layers.0.cross_attn.k_proj
+  - transformer.decoder.layers.0.cross_attn.v_proj
+  - transformer.decoder.layers.0.ca_text.q_proj
+  - transformer.decoder.layers.0.ca_text.k_proj
+  - transformer.decoder.layers.0.ca_text.v_proj
+  - transformer.decoder.layers.0.self_attn.q_proj
+  - transformer.decoder.layers.0.self_attn.k_proj
+  - transformer.decoder.layers.0.self_attn.v_proj
+  - transformer.decoder.layers.1.cross_attn.q_proj
+  - transformer.decoder.layers.1.cross_attn.k_proj
+  - transformer.decoder.layers.1.cross_attn.v_proj
+  - transformer.decoder.layers.1.ca_text.q_proj
+  - transformer.decoder.layers.1.ca_text.k_proj
+  - transformer.decoder.layers.1.ca_text.v_proj
+  ... and 42 more
+
+Loading LoRA weights from outputs/sam3_lora_minimal/best_lora_weights.pt...
+Loaded LoRA weights from outputs/sam3_lora_minimal/best_lora_weights.pt
+Trainable params: 116,736 (0.01%)
+
+Loading validation data from /home/longshiba/Documents/document/dataset/RDD_2022_Seg_COCO/test...
+Using dataset resolution: 672x672
+Loaded COCO dataset from /home/longshiba/Documents/document/dataset/RDD_2022_Seg_COCO/test
+  Images: 449
+  Annotations: 661
+  Categories: {0: 'pothole', 1: 'pothole'}
+
+================================================================================
+RUNNING VALIDATION
+================================================================================
+Validation: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████| 57/57 [00:47<00:00,  1.21it/s]
+
+Collected predictions for 449 images
+
+================================================================================
+COMPUTING METRICS
+================================================================================
+
+[INFO] Creating ground truth from validation dataset...
+
+[INFO] Creating COCO ground truth (downsampling to 192×192)...
+Creating GT: 100%|████████████████████████████████████████████████████████████████████████████████████████████████| 449/449 [00:03<00:00, 134.79it/s]
+[INFO] Created 449 images, 661 annotations
+
+[INFO] Converting 449 predictions to COCO format...
+[INFO] Using SAM3 NMS: prob_threshold=0.3, nms_iou=0.7, max_dets=100
+Converting predictions: 100%|█████████████████████████████████████████████████████████████████████████████████████| 449/449 [00:03<00:00, 125.51it/s]
+
+[INFO] Total predictions after SAM3 NMS filtering: 1831
+
+================================================================================
+COCO mAP EVALUATION
+================================================================================
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.090
+ Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.224
+ Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.049
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.098
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.031
+ Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.233
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.115
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.214
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.216
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.225
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.125
+ Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.267
+
+================================================================================
+cgF1 EVALUATION
+================================================================================
+loading annotations into memory...
+Done (t=0.00s)
+creating index...
+index created!
+Loading predictions from /tmp/sam3_eval_7mtkke93/pred.json
+Loaded 1831 predictions
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████| 449/449 [00:00<00:00, 10256.31it/s]
+Accumulating results
+cgF1 metric, IoU type=segm
+ Average cgF1       @[ IoU=0.50:0.95] = 0.091
+ Average precision  @[ IoU=0.50:0.95] = 0.219
+ Average recall     @[ IoU=0.50:0.95] = 0.149
+ Average F1         @[ IoU=0.50:0.95] = 0.177
+ Average positive_macro_F1 @[ IoU=0.50:0.95] = 0.238
+ Average positive_micro_F1 @[ IoU=0.50:0.95] = 0.179
+ Average positive_micro_precision @[ IoU=0.50:0.95] = 0.225
+ Average IL_precision                = 0.955
+ Average IL_recall                   = 0.726
+ Average IL_F1                       = 0.825
+ Average IL_FPR                      = 0.121
+ Average IL_MCC                      = 0.510
+ Average cgF1       @[ IoU=0.50     ] = 0.178
+ Average precision  @[ IoU=0.50     ] = 0.428
+ Average recall     @[ IoU=0.50     ] = 0.290
+ Average F1         @[ IoU=0.50     ] = 0.346
+ Average positive_macro_F1 @[ IoU=0.50     ] = 0.460
+ Average positive_micro_F1 @[ IoU=0.50     ] = 0.350
+ Average positive_micro_precision @[ IoU=0.50     ] = 0.439
+ Average cgF1       @[ IoU=0.75     ] = 0.077
+ Average precision  @[ IoU=0.75     ] = 0.185
+ Average recall     @[ IoU=0.75     ] = 0.126
+ Average F1         @[ IoU=0.75     ] = 0.150
+ Average positive_macro_F1 @[ IoU=0.75     ] = 0.198
+ Average positive_micro_F1 @[ IoU=0.75     ] = 0.151
+ Average positive_micro_precision @[ IoU=0.75     ] = 0.190
+
+
+================================================================================
+FINAL RESULTS
+================================================================================
+mAP (IoU 0.50:0.95): 0.0895
+mAP@50: 0.2240
+mAP@75: 0.0492
+cgF1 (IoU 0.50:0.95): 0.0915
+cgF1@50: 0.1783
+cgF1@75: 0.0771
+================================================================================
