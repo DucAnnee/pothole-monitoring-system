@@ -10,6 +10,41 @@ These SQL files define the first Streamhouse milestone:
 The Docker Compose Flink services mount this folder at
 `/opt/pothole-lakehouse/sql`.
 
+## Local Job Bootstrap
+
+Start the local lakehouse stack first:
+
+```powershell
+docker compose up -d
+```
+
+Then bootstrap the lakehouse DDL and streaming jobs:
+
+```powershell
+scripts/start-lakehouse-jobs.ps1
+```
+
+The bootstrap script waits for the Compose lakehouse services, applies the
+Iceberg medallion DDL files through Trino, and starts the streaming Flink SQL
+files in this order:
+
+1. `010_kafka_to_bronze.sql`
+2. `020_silver_materialization.sql`
+3. `030_gold_materialization.sql`
+4. `040_gold_to_postgis_projection.sql`
+
+By default the script refuses to submit a second copy when Flink already has
+jobs in `RUNNING`, `CREATED`, or `RESTARTING` state. Stop the existing jobs
+before rerunning the bootstrap, or use this only for intentional parallel
+experiments:
+
+```powershell
+scripts/start-lakehouse-jobs.ps1 -AllowDuplicateJobs
+```
+
+Airflow is not part of this milestone. Flink owns the continuous
+transformations; a scheduler can be added later for batch operations.
+
 ## Connector Packaging
 
 The local Docker Compose setup mounts connector/runtime JARs from

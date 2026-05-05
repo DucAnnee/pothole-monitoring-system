@@ -19,6 +19,18 @@ from bev_processor import BEVProcessor
 from config import ConfigLoader
 from pothole_area_estimator import PotholeAreaEstimator
 
+try:
+    from cloud.shared.dlq import send_to_dlq
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from shared.dlq import send_to_dlq
+
+DLQ_TOPIC = "pothole.surface.area.dlq.v1"
+SERVICE_NAME = "bev-surface"
+
 
 RAW_EVENT_SCHEMA_STR = """
 {
@@ -81,6 +93,13 @@ def produce_and_flush(producer, topic, key, value, timeout=30):
         raise RuntimeError(f"Failed delivering message to {topic}: {delivery_error['error']}")
 
 
+def validate_raw_event(record: dict) -> None:
+    required_fields = ("event_id", "raw_image_object_key", "original_mask")
+    missing = [field for field in required_fields if field not in record or record[field] in (None, "")]
+    if missing:
+        raise ValueError(f"Missing required raw event field(s): {', '.join(missing)}")
+
+
 def main():
     print("=" * 70)
     print("BEV SURFACE AREA SERVICE")
@@ -124,6 +143,7 @@ def main():
         }
     )
     producer = Producer({"bootstrap.servers": config.kafka_bootstrap_servers})
+    dlq_producer = Producer({"bootstrap.servers": config.kafka_bootstrap_servers})
 
     source_topic = config.kafka_source_topic
     output_topic = config.kafka_output_topic
@@ -143,6 +163,7 @@ def main():
                 print(f"[ERROR] Consumer error: {msg.error()}")
                 continue
 
+            raw_event = None
             try:
                 raw_event = deserializer(
                     msg.value(), SerializationContext(source_topic, MessageField.VALUE)
@@ -150,6 +171,7 @@ def main():
                 if raw_event is None:
                     consumer.commit(message=msg)
                     continue
+                validate_raw_event(raw_event)
 
                 event_id = raw_event["event_id"]
                 raw_key = raw_event["raw_image_object_key"]
@@ -187,6 +209,18 @@ def main():
 
             except Exception as e:
                 print(f"[ERROR] Failed to process message: {e}")
+                payload = raw_event if raw_event is not None else msg.value()
+                key = payload.get("event_id") if isinstance(payload, dict) else None
+                send_to_dlq(
+                    dlq_producer,
+                    DLQ_TOPIC,
+                    source_topic,
+                    SERVICE_NAME,
+                    e,
+                    payload,
+                    key=key,
+                )
+                consumer.commit(message=msg)
                 import traceback
 
                 traceback.print_exc()
@@ -195,6 +229,7 @@ def main():
         print("\n[INFO] Stopped by user.")
     finally:
         producer.flush()
+        dlq_producer.flush()
         consumer.close()
         print("[INFO] Shutdown complete.")
 
