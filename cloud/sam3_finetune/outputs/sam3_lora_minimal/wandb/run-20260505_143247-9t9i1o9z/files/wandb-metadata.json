@@ -1,0 +1,44 @@
+{
+  "os":  "Linux-6.17.0-23-generic-x86_64-with-glibc2.39",
+  "python":  "CPython 3.10.20",
+  "startedAt":  "2026-05-05T07:32:47.364791Z",
+  "args":  [
+    "--config",
+    "./configs/minimal_lora_config.yaml"
+  ],
+  "program":  "/home/longshiba/Documents/document/selfstudy/segmentation/SAM3_LoRA/train_sam3_lora_native.py",
+  "codePath":  "train_sam3_lora_native.py",
+  "codePathLocal":  "train_sam3_lora_native.py",
+  "git":  {
+    "remote":  "git@github.com:Sompote/SAM3_LoRA.git",
+    "commit":  "e8744cf3aa7441421d1cf9e3f612679d78e3924e"
+  },
+  "email":  "trandanghienlong2004@gmail.com",
+  "root":  "outputs/sam3_lora_minimal",
+  "host":  "Long-PC",
+  "executable":  "/home/longshiba/miniconda3/envs/cv/bin/python",
+  "cpu_count":  10,
+  "cpu_count_logical":  16,
+  "gpu":  "NVIDIA GeForce RTX 5060 Ti",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "68309917696",
+      "used":  "20252389376"
+    }
+  },
+  "memory":  {
+    "total":  "67181686784"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA GeForce RTX 5060 Ti",
+      "memoryTotal":  "17103323136",
+      "cudaCores":  4608,
+      "architecture":  "Blackwell",
+      "uuid":  "GPU-a07faad0-7872-34b3-a2e5-c3f1332081e5"
+    }
+  ],
+  "cudaVersion":  "13.2",
+  "writerId":  "zivb6f0i1wy2x7j6sy06jc60ywa6spbv"
+}
