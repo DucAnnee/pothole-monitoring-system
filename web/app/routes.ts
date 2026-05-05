@@ -18,5 +18,8 @@ export default [
   route("api/map-data", "routes/api.map-data.tsx"),
   route("api/image/proxy", "routes/api.image.proxy.tsx"),
   route("api/pothole/:id", "routes/api.pothole.$id.tsx"),
+  route("api/v1/collections", "routes/api.v1.collections.tsx"),
+  route("api/v1/collections/road-defects/items", "routes/api.v1.collections.road-defects.items.tsx"),
+  route("api/v1/collections/road-defects/items/:defect_id", "routes/api.v1.collections.road-defects.items.$defect_id.tsx"),
   route("dev-ui", "routes/dev-ui.tsx"),
 ] satisfies RouteConfig;

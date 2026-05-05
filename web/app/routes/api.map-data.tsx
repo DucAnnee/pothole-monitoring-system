@@ -1,6 +1,6 @@
 import type { Route } from "./+types/api.map-data";
 import { cached } from "~/lib/redis.server";
-import { queryMapPotholes } from "~/lib/trino.server";
+import { queryMapPotholes } from "~/lib/postgis.server";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -15,7 +15,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const markers = await cached(key, 30, () =>
     hasCoords ? queryMapPotholes(lat, lon, 1) : queryMapPotholes()
   ).catch((error) => {
-    console.warn("[Trino] map data API unavailable:", error instanceof Error ? error.message : error);
+    console.warn("[PostGIS] map data API unavailable:", error instanceof Error ? error.message : error);
     return [];
   });
 

@@ -1,9 +1,109 @@
 # Schema Documentation
 
-Current storage schemas for the v2 pipeline. Kafka schema details live in
-`KAFKA-CONF.md`; table DDL is mirrored in the relevant service code.
+Standardized storage schemas for the Lakehouse/Streamhouse refactor. Kafka
+schema details live in `KAFKA-CONF.md`; executable DDL now lives under
+`lakehouse/`.
 
-## Kafka-To-Iceberg Flow
+## Lakehouse Standard
+
+The durable analytical source of truth is Apache Iceberg v2 on MinIO, cataloged
+by Polaris and queried by Trino. The target layout is medallion-based:
+
+```text
+iceberg.bronze  append-only source events
+iceberg.silver  conformed ITS domain entities
+iceberg.gold    analytics and serving marts
+iceberg.ml      training, annotation, validation, and lineage assets
+```
+
+PostgreSQL/PostGIS is a serving projection only. Rebuild
+`serving.current_road_defects` from `iceberg.gold.current_road_defects` whenever
+the API/workflow database needs recovery.
+
+Authoritative DDL files:
+
+| Layer | DDL |
+|---|---|
+| Namespaces | `lakehouse/iceberg/001_medallion_namespaces.sql` |
+| Bronze | `lakehouse/iceberg/010_bronze_tables.sql` |
+| Silver | `lakehouse/iceberg/020_silver_tables.sql` |
+| Gold | `lakehouse/iceberg/030_gold_tables.sql` |
+| ML | `lakehouse/iceberg/040_ml_tables.sql` |
+| PostGIS serving | `lakehouse/postgis/001_serving_schema.sql` |
+
+## Standard Tables
+
+Bronze event tables:
+
+```text
+bronze.raw_detection_events
+bronze.surface_area_events
+bronze.depth_estimation_events
+bronze.severity_score_events
+bronze.pipeline_latency_events
+bronze.device_telemetry_events
+bronze.model_deployment_events
+bronze.review_events
+```
+
+Silver conformed tables:
+
+```text
+silver.detections
+silver.observations
+silver.defect_evidence
+silver.devices
+silver.vehicles
+silver.models
+silver.calibrations
+silver.road_segments
+silver.admin_areas
+silver.quality_flags
+```
+
+Gold marts:
+
+```text
+gold.current_road_defects
+gold.defect_observation_history
+gold.dashboard_summary_daily
+gold.district_severity_daily
+gold.model_quality_metrics
+gold.device_health_latest
+gold.pipeline_latency_summary
+```
+
+ML tables:
+
+```text
+ml.training_dataset_items
+ml.dataset_versions
+ml.annotation_versions
+ml.model_validation_runs
+ml.model_lineage
+```
+
+## PostGIS Serving Projection
+
+The API-facing database is `postgres.postgis_serving`, schema `serving`.
+`serving.current_road_defects` is the OGC API Features source and includes:
+
+```text
+defect_id, defect_type, status, severity_score, severity_level, confidence,
+quality_flags, geometry GEOMETRY(Point, 4326), road_segment_id, district, ward,
+first_seen_at, last_seen_at, observation_count, latest_raw_image_object_key,
+latest_bev_object_key
+```
+
+The projection includes a GiST geometry index for bbox queries and secondary
+indexes for district, ward, road segment, severity, status, and recency filters.
+
+## Legacy `iceberg.city` Tables
+
+The old `iceberg.city.*` tables remain documented below as migration context.
+They are not the target schema and should not receive new table ownership.
+
+## Legacy Kafka-To-Iceberg Flow
 
 | Kafka topic | Iceberg table | Writer |
 |---|---|---|

@@ -23,14 +23,14 @@ import { SEVERITY, normalizeSeverity } from "~/constants/severity";
 import { cached } from "~/lib/redis.server";
 import { requireAuth } from "~/lib/session.server";
 import type { PotholeDetail, PotholeMarker } from "~/lib/trino.server";
-import { queryMapPotholes } from "~/lib/trino.server";
+import { queryMapPotholes } from "~/lib/postgis.server";
 
 export const handle = { title: "Pothole Map" };
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireAuth(request);
   const markers = await cached("web:mapdata:recent", 30, queryMapPotholes).catch((error) => {
-    console.warn("[Trino] map data unavailable:", error instanceof Error ? error.message : error);
+    console.warn("[PostGIS] map data unavailable:", error instanceof Error ? error.message : error);
     return [] as PotholeMarker[];
   });
   return { markers };

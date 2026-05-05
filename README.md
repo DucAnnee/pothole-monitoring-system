@@ -4,7 +4,7 @@ Hybrid edge-cloud platform for detecting potholes from bus-mounted cameras,
 estimating physical severity, deduplicating detections geospatially, and
 displaying the resulting road-defect state in a web dashboard.
 
-## Current Pipeline
+## Standardized Pipeline
 
 ```text
 edge
@@ -15,13 +15,21 @@ edge
   -> pothole.depth.v1
   -> cloud/severity_calculation_service
   -> pothole.severity.score.v1
-  -> cloud/final_enrichment_service
-  -> iceberg.city.potholes + pothole_history
+  -> Flink
+  -> iceberg.bronze.*
+  -> iceberg.silver.*
+  -> iceberg.gold.*
+  -> PostGIS serving projection
+  -> OGC API Features + dashboard
 ```
 
 `graphify-out/GRAPH_REPORT.md` identifies the core graph hubs as
 `ConfigLoader`, `EdgePipeline`, `ModelRegistry`, `Uploader`, `log_event()`, and
 the cloud microservice pipeline.
+
+The Python ETL/final-enrichment Iceberg writes are legacy table owners during
+migration. New storage ownership belongs to Flink jobs in
+`lakehouse/flink/sql/`.
 
 ## Repository Map
 
@@ -34,6 +42,9 @@ the cloud microservice pipeline.
 | `cloud/severity_calculation_service/` | Stateless depth+area severity scoring. |
 | `cloud/final_enrichment_service/` | Raw+severity aggregation, H3 dedup, OSM geocoding, Iceberg writes. |
 | `cloud/etl_service/` | Kafka-to-Iceberg ingestion for raw, surface area, and severity topics. |
+| `lakehouse/iceberg/` | Medallion Iceberg DDL for Bronze, Silver, Gold, and ML tables. |
+| `lakehouse/flink/sql/` | Kafka-to-Bronze, Silver, Gold, and PostGIS projection Flink SQL jobs. |
+| `lakehouse/postgis/` | Serving projection DDL for OGC/API/GIS workflows. |
 | `web/` | Current React Router 7 + Vite web application and server-side API routes. |
 | `dashboard/`, `dashboard-backend/` | Legacy/reference dashboard surfaces. |
 | `tests/` | Contract and E2E tests for schemas, topics, services, and pipeline behavior. |
@@ -46,6 +57,9 @@ Authoritative docs:
 - `PIPELINE.md` - active event flow
 - `KAFKA-CONF.md` - Avro schemas and Kafka topic configuration
 - `SCHEMA.md` - Iceberg table schemas
+- `lakehouse/iceberg/*.sql` - standardized Lakehouse DDL
+- `lakehouse/postgis/*.sql` - serving projection DDL
+- `container-conf/flink/lib/*.jar` - Flink connector/runtime JARs mounted into `/opt/flink/lib`
 - `tests/contract/test_schema_contracts.py` - schema compatibility checks
 - `tests/contract/test_topic_contracts.py` - topic creation checks
 
@@ -66,7 +80,23 @@ Start infrastructure:
 docker compose up -d
 ```
 
-Run cloud services:
+Important service ports:
+
+| Service | Port |
+|---|---:|
+| Trino | `8081` |
+| Flink UI | `8084` |
+| PostGIS serving | `5437` |
+| MinIO API / console | `9000` / `9090` |
+
+Flink connector/runtime JARs are expected in `container-conf/flink/lib/` and
+are mounted individually into both Flink services. The verified local set is:
+Iceberg Flink runtime `1.10.1` for Flink `1.19`, Iceberg AWS bundle `1.10.1`,
+Flink Kafka `3.3.0-1.19`, Flink JDBC `3.3.0-1.19`, Flink Avro `1.19.3`,
+Flink Confluent Avro `1.19.3`, PostgreSQL JDBC `42.7.11`, and Hadoop client
+API/runtime `3.3.6`.
+
+Run legacy cloud services while migrating storage ownership:
 
 ```bash
 python cloud/etl_service/etl_microservice.py
@@ -99,6 +129,14 @@ npm install
 npm run dev
 ```
 
+OGC API Features-style endpoints:
+
+```text
+GET /api/v1/collections
+GET /api/v1/collections/road-defects/items
+GET /api/v1/collections/road-defects/items/{defect_id}
+```
+
 ## Verification
 
 ```bash
@@ -117,5 +155,6 @@ graphify update .
 - GPS is simulated and `vehicle_id` is generated at process startup.
 - BEV/depth failures need DLQs and quality flags instead of being treated as ordinary low-severity observations.
 - Final pothole records retain raw image evidence but not enough BEV/model/calibration evidence.
+- Flink connector packaging is verified, but the full streaming jobs still need end-to-end fixture/replay validation.
 - Web auth is demo-grade and API routes need production authentication/RBAC.
 - Production deployment assets, secrets, TLS, Kafka ACLs, observability, and backup/restore controls are still future work.

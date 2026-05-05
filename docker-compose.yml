@@ -261,6 +261,26 @@ services:
     networks:
       - kafka-net
 
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: postgis-serving
+    environment:
+      POSTGRES_USER: serving
+      POSTGRES_PASSWORD: servingpassword
+      POSTGRES_DB: postgis_serving
+    ports:
+      - "5437:5432"
+    volumes:
+      - postgis-data:/var/lib/postgresql/data
+      - ./lakehouse/postgis/001_serving_schema.sql:/docker-entrypoint-initdb.d/001_serving_schema.sql:ro
+    networks:
+      - kafka-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U serving -d postgis_serving"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   pgadmin:
     image: dpage/pgadmin4
     container_name: pgadmin
@@ -293,6 +313,67 @@ services:
     networks:
       - kafka-net
     restart: on-failure:5
+
+
+  # ==========================================================
+  #  FLINK STREAMHOUSE PROCESSING
+  # ==========================================================
+  flink-jobmanager:
+    image: flink:1.19-scala_2.12-java17
+    container_name: flink-jobmanager
+    command: jobmanager
+    ports:
+      - "8084:8081"
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+    volumes:
+      - ./lakehouse/flink/sql:/opt/pothole-lakehouse/sql:ro
+      - ./container-conf/flink/lib/iceberg-aws-bundle-1.10.1.jar:/opt/flink/lib/iceberg-aws-bundle-1.10.1.jar:ro
+      - ./container-conf/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:/opt/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:ro
+      - ./container-conf/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:/opt/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:ro
+      - ./container-conf/flink/lib/flink-avro-1.19.3.jar:/opt/flink/lib/flink-avro-1.19.3.jar:ro
+      - ./container-conf/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:/opt/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:ro
+      - ./container-conf/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:/opt/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:ro
+      - ./container-conf/flink/lib/postgresql-42.7.11.jar:/opt/flink/lib/postgresql-42.7.11.jar:ro
+      - ./container-conf/flink/lib/hadoop-client-api-3.3.6.jar:/opt/flink/lib/hadoop-client-api-3.3.6.jar:ro
+      - ./container-conf/flink/lib/hadoop-client-runtime-3.3.6.jar:/opt/flink/lib/hadoop-client-runtime-3.3.6.jar:ro
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_started
+      polaris:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      postgis:
+        condition: service_healthy
+    networks:
+      - kafka-net
+
+  flink-taskmanager:
+    image: flink:1.19-scala_2.12-java17
+    container_name: flink-taskmanager
+    command: taskmanager
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+      - TASK_MANAGER_NUMBER_OF_TASK_SLOTS=4
+    volumes:
+      - ./lakehouse/flink/sql:/opt/pothole-lakehouse/sql:ro
+      - ./container-conf/flink/lib/iceberg-aws-bundle-1.10.1.jar:/opt/flink/lib/iceberg-aws-bundle-1.10.1.jar:ro
+      - ./container-conf/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:/opt/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:ro
+      - ./container-conf/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:/opt/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:ro
+      - ./container-conf/flink/lib/flink-avro-1.19.3.jar:/opt/flink/lib/flink-avro-1.19.3.jar:ro
+      - ./container-conf/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:/opt/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:ro
+      - ./container-conf/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:/opt/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:ro
+      - ./container-conf/flink/lib/postgresql-42.7.11.jar:/opt/flink/lib/postgresql-42.7.11.jar:ro
+      - ./container-conf/flink/lib/hadoop-client-api-3.3.6.jar:/opt/flink/lib/hadoop-client-api-3.3.6.jar:ro
+      - ./container-conf/flink/lib/hadoop-client-runtime-3.3.6.jar:/opt/flink/lib/hadoop-client-runtime-3.3.6.jar:ro
+    depends_on:
+      flink-jobmanager:
+        condition: service_started
+    networks:
+      - kafka-net
 
 
   # ==========================================================
@@ -543,5 +624,6 @@ volumes:
   kafka-data-3:
   minio-data:
   postgres-data:
+  postgis-data:
   grafana-data:
   redis-data:

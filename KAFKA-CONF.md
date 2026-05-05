@@ -1,6 +1,8 @@
 # Kafka Configuration
 
-Current Kafka contracts for the v2 pothole pipeline.
+Current Kafka contracts for the v2 pothole pipeline. These topics are retained
+unchanged for the first Lakehouse/Streamhouse milestone; Flink consumes them and
+writes standardized Bronze Iceberg tables.
 
 ## Topic Chain
 
@@ -10,6 +12,23 @@ pothole.raw.events.v2
   -> pothole.depth.v1
   -> pothole.severity.score.v1
 ```
+
+## Lakehouse Consumers
+
+The standardized storage path is:
+
+```text
+current Kafka topics
+  -> lakehouse/flink/sql/010_kafka_to_bronze.sql
+  -> iceberg.bronze.*
+  -> iceberg.silver.*
+  -> iceberg.gold.*
+  -> serving.current_road_defects
+```
+
+Do not introduce topic schema v3 as part of the first storage refactor. Plan v3
+separately for stable device identity, real GPS, model lineage, and normalized
+quality flags.
 
 ## Avro Schemas
 
