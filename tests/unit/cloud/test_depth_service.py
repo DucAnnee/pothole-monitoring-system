@@ -58,3 +58,19 @@ def test_download_image_parses_s3_and_plain_keys(repo_root, load_module):
         ("warehouse", "bev_images/a.jpg"),
         ("warehouse", "raw_images/a.jpg"),
     ]
+
+
+@pytest.mark.unit
+def test_classify_surface_event_failure_returns_missing_images_for_empty_keys(repo_root, load_module):
+    pytest.importorskip("tritonclient")
+    module = load_module(
+        "depth_pipeline_validation_unit",
+        repo_root / "cloud" / "depth_estimation_model" / "cloud_pipeline.py",
+        repo_root / "cloud" / "depth_estimation_model",
+    )
+
+    reason = module.classify_surface_event_failure(
+        {"event_id": "evt-1", "raw_image_object_key": "", "bev_object_key": "", "surface_area_cm2": 1.0}
+    )
+
+    assert reason == "missing_raw_and_bev_image_object_key"

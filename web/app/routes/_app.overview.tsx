@@ -13,14 +13,14 @@ import { SparklineChart } from "~/components/SparklineChart";
 import { SEVERITY } from "~/constants/severity";
 import { cached } from "~/lib/redis.server";
 import { requireAuth } from "~/lib/session.server";
-import { emptySummaryData, querySummary } from "~/lib/trino.server";
+import { emptySummaryData, querySummary } from "~/lib/postgis.server";
 
 export const handle = { title: "Executive Overview" };
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireAuth(request);
   return cached("web:summary:v1", 60, querySummary).catch((error) => {
-    console.warn("[Trino] summary unavailable:", error instanceof Error ? error.message : error);
+    console.warn("[PostGIS] summary unavailable:", error instanceof Error ? error.message : error);
     return emptySummaryData();
   });
 }

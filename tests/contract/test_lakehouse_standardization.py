@@ -137,7 +137,90 @@ def test_flink_sql_pins_current_topics_and_medallion_flow(repo_root: Path):
     projection = read(flink_dir / "040_gold_to_postgis_projection.sql").lower()
     assert "jdbc:postgresql://postgis:5432/postgis_serving" in projection
     assert "serving.current_road_defects_projection_inbox" in projection
+    assert "primary key (defect_id) not enforced" in projection
     assert "from gold.current_road_defects" in projection
+    assert "join silver.detections" in projection
+    assert "g.defect_id = concat('defect-', d.event_id)" in projection
+    assert "d.gps_lon as longitude" in projection
+    assert "d.gps_lat as latitude" in projection
+
+
+def test_flink_silver_declares_quality_flag_semantics(repo_root: Path):
+    flink_dir = repo_root / "lakehouse" / "flink" / "sql"
+    silver = read(flink_dir / "020_silver_materialization.sql").lower()
+    gold = read(flink_dir / "030_gold_materialization.sql").lower()
+    silver_compact = " ".join(silver.split())
+    gold_compact = " ".join(gold.split())
+
+    assert "options('streaming'='true'" in silver
+    assert "monitor-interval" in silver
+    assert "options('streaming'='true'" in gold
+    assert "monitor-interval" in gold
+    assert "insert into gold.current_road_defects" in gold
+    assert "insert into gold.defect_observation_history" in gold
+    assert " left join " not in f" {silver_compact} "
+    assert " group by " not in f" {silver_compact} "
+    assert " left join " not in f" {gold_compact} "
+    assert " group by " not in f" {gold_compact} "
+
+    for flag in [
+        "gps_accuracy_missing",
+        "model_lineage_missing",
+        "calibration_lineage_missing",
+        "bev_missing",
+        "depth_missing",
+        "severity_missing",
+    ]:
+        assert flag in silver
+
+    assert "o.quality_flags_json as quality_flags_json" in gold
+    assert "'[]' as quality_flags_json" not in silver
+    assert "depth_cm is null and severity_score is null" in silver
+    assert "depth_cm is null" in silver
+    assert "severity_score is null" in silver
+
+
+def test_flink_kafka_sources_alias_active_avro_fields(repo_root: Path):
+    sql = read(repo_root / "lakehouse" / "flink" / "sql" / "010_kafka_to_bronze.sql").lower()
+    compact_sql = " ".join(sql.split())
+
+    assert "`timestamp` as event_time" in sql
+    assert "gps_accuracy as gps_accuracy_m" in sql
+    assert "cast(null as string) as device_id" in sql
+    assert "bev_mask as bev_mask_json" in sql
+    assert "cast(original_mask as string) as original_mask_json" in sql
+    assert "cast(severity_score as double) as severity_score" in sql
+    assert "select *" not in sql
+    raw_source = sql.split("create temporary table kafka_raw_events", 1)[1].split(") with", 1)[0]
+    assert "`timestamp` timestamp(6)" in raw_source
+    assert "timestamp timestamp(6)" not in raw_source.replace("`timestamp`", "")
+    assert "original_mask array<array<double>>" in raw_source
+    assert "original_mask_json string" not in raw_source
+    assert "device_id string" not in raw_source
+    assert "event_time timestamp" not in raw_source
+    surface_source = sql.split("create temporary table kafka_surface_area_events", 1)[1].split(") with", 1)[0]
+    assert "bev_mask string" in surface_source
+    assert "bev_mask_json string" not in surface_source
+    severity_source = sql.split("create temporary table kafka_severity_events", 1)[1].split(") with", 1)[0]
+    assert "severity_score int" in severity_source
+    assert (
+        "insert into bronze.raw_detection_events ( event_id, vehicle_id, device_id, event_time, gps_lat, "
+        "gps_lon, gps_accuracy_m, raw_image_object_key, original_mask_json, detection_confidence, "
+        "kafka_topic, kafka_partition, kafka_offset, ingested_at, payload_json ) select"
+    ) in compact_sql
+    assert (
+        "insert into bronze.surface_area_events ( event_id, raw_image_object_key, bev_object_key, "
+        "bev_mask_json, surface_area_cm2, confidence, processed_at, kafka_topic, kafka_partition, "
+        "kafka_offset, ingested_at, payload_json ) select"
+    ) in compact_sql
+    assert (
+        "insert into bronze.depth_estimation_events ( event_id, depth_cm, confidence, surface_area_cm2, "
+        "processed_at, kafka_topic, kafka_partition, kafka_offset, ingested_at, payload_json ) select"
+    ) in compact_sql
+    assert (
+        "insert into bronze.severity_score_events ( event_id, depth_cm, surface_area_cm2, severity_score, "
+        "severity_level, calculated_at, kafka_topic, kafka_partition, kafka_offset, ingested_at, payload_json ) select"
+    ) in compact_sql
 
 
 def test_compose_declares_streamhouse_and_serving_services(repo_root: Path):
@@ -152,3 +235,51 @@ def test_compose_declares_streamhouse_and_serving_services(repo_root: Path):
     assert "flink:1.19" in compose
     assert "./lakehouse/postgis/001_serving_schema.sql" in compose
     assert "./lakehouse/flink/sql:/opt/pothole-lakehouse/sql:ro" in compose
+
+
+def test_lakehouse_bootstrap_script_submits_standard_jobs(repo_root: Path):
+    script = read(repo_root / "scripts" / "start-lakehouse-jobs.ps1").lower()
+
+    for service in [
+        "flink-jobmanager",
+        "flink-taskmanager",
+        "trino",
+        "postgis-serving",
+        "polaris",
+        "minio",
+    ]:
+        assert service in script
+
+    for ddl_file in [
+        "001_medallion_namespaces.sql",
+        "010_bronze_tables.sql",
+        "020_silver_tables.sql",
+        "030_gold_tables.sql",
+        "040_ml_tables.sql",
+    ]:
+        assert ddl_file in script
+
+    previous_index = -1
+    for flink_job in [
+        "010_kafka_to_bronze.sql",
+        "020_silver_materialization.sql",
+        "030_gold_materialization.sql",
+        "040_gold_to_postgis_projection.sql",
+    ]:
+        current_index = script.index(flink_job)
+        assert current_index > previous_index
+        previous_index = current_index
+
+    assert "docker exec -d flink-jobmanager" in script
+    for expected_bootstrap_guard in [
+        "allowduplicatejobs",
+        "jobs/overview",
+        "polaris-setup",
+        "wait-containerhealthy",
+        "wait-containercompleted",
+        "wait-flinkjobcountincrease",
+        "use catalog lakehouse",
+        "/tmp/pothole-lakehouse-",
+        'if ($filename -ne "010_kafka_to_bronze.sql")',
+    ]:
+        assert expected_bootstrap_guard in script

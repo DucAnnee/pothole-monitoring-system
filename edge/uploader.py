@@ -10,8 +10,7 @@ from uuid import uuid4
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import List, Optional
-import random
+from typing import Any, List, Optional
 
 from confluent_kafka import Producer
 from confluent_kafka.serialization import SerializationContext, MessageField
@@ -20,6 +19,7 @@ from confluent_kafka.schema_registry.avro import AvroSerializer
 from minio import Minio
 
 from data_models import DetectionData, BundledData
+from gps_provider import build_gps_provider
 from pipeline_logger import get_pipeline_logger, log_event
 
 # ============================================================================
@@ -52,17 +52,27 @@ RAW_EVENT_SCHEMA_STR = """
 class Uploader:
     """Uploading unit"""
 
-    def __init__(self, config, vehicle_id: str):
+    def __init__(
+        self,
+        config,
+        vehicle_id: str,
+        device_id: str | None = None,
+        gps_provider: Any = None,
+    ):
         """
         Initialize the uploading unit.
 
         Args:
             config: Configuration object
             vehicle_id: Unique vehicle identifier
+            device_id: Stable edge device identifier
+            gps_provider: Provider used to read GPS fixes
         """
 
         self.config = config
         self.vehicle_id = vehicle_id
+        self.device_id = device_id
+        self.gps_provider = gps_provider or build_gps_provider(config)
         self.logger = get_pipeline_logger("uploader")
 
         # local storage directory
@@ -207,7 +217,7 @@ class Uploader:
 
         return bundled_list
 
-    def upload_to_cloud(self, bundled: BundledData) -> bool:
+    def upload_to_cloud(self, bundled: BundledData, gps: Any = None) -> bool:
         """
         Upload enriched data to cloud (MinIO + Kafka).
 
@@ -221,9 +231,6 @@ class Uploader:
             return False
 
         try:
-            # generate random GPS coordinates
-            gps_lat, gps_lon = self._generate_random_gps()
-
             # upload raw image to MinIO
             raw_s3_path = self._upload_image_to_minio(
                 bundled.frame, bundled.event_id, "raw_images"
@@ -231,18 +238,7 @@ class Uploader:
             if not raw_s3_path:
                 return False
 
-            timestamp_ms = int(bundled.timestamp.timestamp() * 1000)
-            raw_event = {
-                "event_id": bundled.event_id,
-                "vehicle_id": self.vehicle_id,
-                "timestamp": timestamp_ms,
-                "gps_lat": gps_lat,
-                "gps_lon": gps_lon,
-                "gps_accuracy": random.uniform(5.0, 15.0),
-                "raw_image_object_key": raw_s3_path,
-                "original_mask": bundled.coordinates,
-                "detection_confidence": bundled.conf,
-            }
+            raw_event = self._build_raw_event(bundled, raw_s3_path, gps=gps)
 
             # Serialize and produce to Kafka
             topic = self.config.config["kafka"]["topic"]
@@ -295,12 +291,33 @@ class Uploader:
             self.logger.error("Upload failed: %s", e)
             return False
 
-    def _generate_random_gps(self):
-        """Generate random GPS coordinates"""
-        gps_config = self.config.config["gps"]
-        lat = random.uniform(gps_config["lat_min"], gps_config["lat_max"])
-        lon = random.uniform(gps_config["lon_min"], gps_config["lon_max"])
-        return lat, lon
+    def _gps_raw_fields(self, gps: Any = None) -> dict[str, float | None]:
+        if gps is None:
+            gps = self.gps_provider.read()
+        if hasattr(gps, "to_raw_event_fields"):
+            return gps.to_raw_event_fields()
+        return {
+            "gps_lat": gps["gps_lat"],
+            "gps_lon": gps["gps_lon"],
+            "gps_accuracy": gps.get("gps_accuracy"),
+        }
+
+    def _build_raw_event(
+        self,
+        bundled: BundledData,
+        raw_s3_path: str,
+        gps: Any = None,
+    ) -> dict[str, Any]:
+        timestamp_ms = int(bundled.timestamp.timestamp() * 1000)
+        return {
+            "event_id": bundled.event_id,
+            "vehicle_id": self.vehicle_id,
+            "timestamp": timestamp_ms,
+            **self._gps_raw_fields(gps),
+            "raw_image_object_key": raw_s3_path,
+            "original_mask": bundled.coordinates,
+            "detection_confidence": bundled.conf,
+        }
 
     def _delivery_report(self, err, msg):
         """Kafka delivery callback"""
@@ -367,6 +384,9 @@ class Uploader:
                 "timestamp": bundled.timestamp.isoformat(),
                 "conf": bundled.conf,
                 "coordinates": bundled.coordinates,
+                "vehicle_id": self.vehicle_id,
+                "device_id": self.device_id,
+                "gps": self._gps_raw_fields(),
             }
 
             metadata_path = self.metadata_dir / f"{bundled.event_id}.json"
@@ -427,7 +447,7 @@ class Uploader:
                 )
 
                 # try upload
-                if self.upload_to_cloud(bundled):
+                if self.upload_to_cloud(bundled, gps=metadata.get("gps")):
                     # delete files on success
                     img_path.unlink()
                     metadata_path.unlink()

@@ -75,3 +75,16 @@ def test_surface_area_schema_keeps_bev_mask_as_string(repo_root, schema_constant
     )
 
     assert '"name": "bev_mask", "type": "string"' in schema
+
+
+@pytest.mark.unit
+def test_validate_raw_event_rejects_missing_raw_image_object_key(repo_root, load_module):
+    pytest.importorskip("minio")
+    module = load_module(
+        "bev_surface_service_validation_unit",
+        repo_root / "cloud" / "bev_surface_service" / "bev_surface_service.py",
+        repo_root / "cloud" / "bev_surface_service",
+    )
+
+    with pytest.raises(ValueError, match="raw_image_object_key"):
+        module.validate_raw_event({"event_id": "evt-1", "original_mask": []})

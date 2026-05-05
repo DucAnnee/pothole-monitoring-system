@@ -1,4 +1,6 @@
 import { getLatencyMetrics, pingRedis } from "./redis.server";
+import pg from "pg";
+import * as Minio from "minio";
 
 export interface ServiceStatus {
   name: string;
@@ -43,10 +45,58 @@ export interface HealthData {
   redis_ok: boolean;
 }
 
+async function probeKafka() {
+  const url = process.env.KAFKA_UI_URL ?? "http://localhost:8080";
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+    return { status: res.ok ? ("healthy" as const) : ("warning" as const), detail: `${res.status}` };
+  } catch {
+    return { status: "unknown" as const, detail: "unreachable" };
+  }
+}
+
+async function probeMinio() {
+  try {
+    const client = new Minio.Client({
+      endPoint: process.env.MINIO_HOST ?? "localhost",
+      port: Number(process.env.MINIO_PORT ?? "9000"),
+      useSSL: false,
+      accessKey: process.env.MINIO_ACCESS_KEY ?? "minioadmin",
+      secretKey: process.env.MINIO_SECRET_KEY ?? "minioadmin",
+    });
+    await client.bucketExists(process.env.MINIO_BUCKET ?? "warehouse");
+    return { status: "healthy" as const };
+  } catch {
+    return { status: "unknown" as const };
+  }
+}
+
+async function probePostgis() {
+  const client = new pg.Client({
+    host: process.env.POSTGIS_HOST ?? "localhost",
+    port: Number(process.env.POSTGIS_PORT ?? "5437"),
+    user: process.env.POSTGIS_USER ?? "serving",
+    password: process.env.POSTGIS_PASSWORD ?? "servingpassword",
+    database: process.env.POSTGIS_DATABASE ?? "postgis_serving",
+  });
+  try {
+    await client.connect();
+    await client.query("SELECT 1 FROM serving.current_road_defects LIMIT 1");
+    return { status: "healthy" as const };
+  } catch {
+    return { status: "unknown" as const };
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
 export async function fetchHealthData(): Promise<HealthData> {
-  const [latency, redis_ok] = await Promise.all([
+  const [latency, redis_ok, kafkaProbe, _minioProbe, postgisProbe] = await Promise.all([
     getLatencyMetrics().catch(() => null),
     pingRedis(),
+    probeKafka(),
+    probeMinio(),
+    probePostgis(),
   ]);
 
   const now = new Date().toISOString();
@@ -70,13 +120,19 @@ export async function fetchHealthData(): Promise<HealthData> {
     );
   }
 
+  microservices.push({
+    name: "PostGIS Projection",
+    icon: "postgis",
+    status: postgisProbe.status,
+    uptime: 0,
+    latency_ms: 0,
+    last_check: now,
+  });
+
   return {
     kafka: {
       brokers: [
-        { name: "broker-1", ip: "10.0.0.1", last_heartbeat: now, active: true },
-        { name: "broker-2", ip: "10.0.0.2", last_heartbeat: now, active: true },
-        { name: "broker-3", ip: "10.0.0.3", last_heartbeat: now, active: true },
-        { name: "controller-1", ip: "10.0.0.4", last_heartbeat: now, active: true },
+        { name: "kafka-ui", ip: kafkaProbe.detail ?? "", last_heartbeat: now, active: kafkaProbe.status === "healthy" },
       ],
     },
     minio: {
@@ -90,47 +146,7 @@ export async function fetchHealthData(): Promise<HealthData> {
       queries_per_min: 12,
     },
     microservices,
-    edge_devices: [
-      {
-        vehicle_id: "BUS-001",
-        device_id: "RPi-4B-A1",
-        gps_ok: true,
-        camera_ok: true,
-        model_version: "YOLOv8-seg-v2.1",
-        last_upload: now,
-        battery_pct: 87,
-        storage_pct: 42,
-        connection: "online",
-        pending_count: 0,
-        health: "healthy",
-      },
-      {
-        vehicle_id: "BUS-002",
-        device_id: "RPi-4B-A2",
-        gps_ok: true,
-        camera_ok: false,
-        model_version: "YOLOv8-seg-v2.1",
-        last_upload: new Date(Date.now() - 300000).toISOString(),
-        battery_pct: 62,
-        storage_pct: 71,
-        connection: "degraded",
-        pending_count: 12,
-        health: "warning",
-      },
-      {
-        vehicle_id: "BUS-003",
-        device_id: "RPi-4B-A3",
-        gps_ok: false,
-        camera_ok: false,
-        model_version: "YOLOv8-seg-v2.0",
-        last_upload: new Date(Date.now() - 3600000).toISOString(),
-        battery_pct: 18,
-        storage_pct: 91,
-        connection: "offline",
-        pending_count: 87,
-        health: "critical",
-      },
-    ],
+    edge_devices: [],
     latency: latency ?? {
       stages: {},
       recentEvents: [],

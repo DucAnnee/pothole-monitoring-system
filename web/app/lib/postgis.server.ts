@@ -1,7 +1,63 @@
 import pg from "pg";
-import type { PotholeDetail, PotholeMarker } from "~/lib/trino.server";
+import type { PotholeDetail } from "~/lib/trino.server";
 
 const { Pool } = pg;
+
+export interface PotholeMarker {
+  pothole_id: string;
+  gps_lat: number;
+  gps_lon: number;
+  severity_level: string;
+  status: string;
+  district?: string;
+  reported_at?: string;
+}
+
+export interface SummaryData {
+  activePotholes: {
+    count: number;
+    trend: {
+      today: { count: number; comparison: string };
+      thisWeek: { count: number; comparison: string };
+    };
+  };
+  averageSeverity: number;
+  inProgress: number;
+  activePotholesLast30Days: Array<{ date: string; count: number }>;
+  severityDistribution: Record<string, number>;
+  statusChanges: {
+    reportedToInProgress: { thisWeek: number; comparison: string };
+    inProgressToFixed: { thisWeek: number; comparison: string };
+  };
+  recentCritical: PotholeMarker[];
+  topDistricts: Array<{ district: string; count: number }>;
+}
+
+export function emptySummaryData(): SummaryData {
+  const now = new Date();
+  return {
+    activePotholes: {
+      count: 0,
+      trend: {
+        today: { count: 0, comparison: "+0 vs yesterday" },
+        thisWeek: { count: 0, comparison: "+0 last week" },
+      },
+    },
+    averageSeverity: 0,
+    inProgress: 0,
+    activePotholesLast30Days: Array.from({ length: 30 }, (_, i) => {
+      const d = new Date(now.getTime() - (29 - i) * 86400000);
+      return { date: d.toISOString().split("T")[0], count: 0 };
+    }),
+    severityDistribution: { MINOR: 0, MODERATE: 0, HIGH: 0, CRITICAL: 0 },
+    statusChanges: {
+      reportedToInProgress: { thisWeek: 0, comparison: "+0 last week" },
+      inProgressToFixed: { thisWeek: 0, comparison: "+0 last week" },
+    },
+    recentCritical: [],
+    topDistricts: [],
+  };
+}
 
 type PointGeometry = {
   type: "Point";
@@ -245,5 +301,77 @@ export async function queryPotholeDetail(id: string): Promise<PotholeDetail | nu
     observation_count: row.observation_count,
     raw_image_path: row.latest_raw_image_object_key,
     bev_image_path: row.latest_bev_object_key,
+  };
+}
+
+export async function querySummary(): Promise<SummaryData> {
+  const [summaryRows, severityRows, topDistrictRows] = await Promise.all([
+    queryPostgis<{
+      active_count: string;
+      average_severity: string | null;
+      in_progress_count: string;
+      new_today: string;
+    }>(
+      `
+      SELECT
+        COUNT(*) FILTER (WHERE status IN ('reported', 'in_progress')) AS active_count,
+        AVG(severity_score) FILTER (WHERE status IN ('reported', 'in_progress')) AS average_severity,
+        COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress_count,
+        COUNT(*) FILTER (WHERE first_seen_at >= date_trunc('day', now())) AS new_today
+      FROM serving.current_road_defects
+      `
+    ),
+    queryPostgis<{ severity_level: string; count: string }>(
+      `
+      SELECT severity_level, COUNT(*) AS count
+      FROM serving.current_road_defects
+      WHERE status IN ('reported', 'in_progress') AND severity_level IS NOT NULL
+      GROUP BY severity_level
+      `
+    ),
+    queryPostgis<{ district: string | null; count: string }>(
+      `
+      SELECT COALESCE(district, 'Unknown') AS district, COUNT(*) AS count
+      FROM serving.current_road_defects
+      WHERE status IN ('reported', 'in_progress')
+      GROUP BY COALESCE(district, 'Unknown')
+      ORDER BY COUNT(*) DESC
+      LIMIT 5
+      `
+    ),
+  ]);
+
+  const row = summaryRows[0];
+  // Build severity_distribution from active-only counts (status IN ('reported', 'in_progress'))
+  const severityDistribution = {
+    MINOR: 0,
+    MODERATE: 0,
+    HIGH: 0,
+    CRITICAL: 0,
+  };
+  for (const r of severityRows) {
+    const key = r.severity_level.toUpperCase();
+    if (key in severityDistribution) {
+      severityDistribution[key as keyof typeof severityDistribution] = Number(r.count);
+    }
+  }
+
+  const recentCritical = await queryMapPotholes();
+
+  return {
+    activePotholes: {
+      count: Number(row?.active_count ?? 0),
+      trend: {
+        today: { count: Number(row?.new_today ?? 0), comparison: "+0 vs yesterday" },
+        thisWeek: { count: 0, comparison: "+0 last week" },
+      },
+    },
+    averageSeverity: Math.round(Number(row?.average_severity ?? 0) * 100) / 100,
+    inProgress: Number(row?.in_progress_count ?? 0),
+    activePotholesLast30Days: emptySummaryData().activePotholesLast30Days,
+    severityDistribution,
+    statusChanges: emptySummaryData().statusChanges,
+    recentCritical: recentCritical.filter((p) => p.severity_level === "CRITICAL").slice(0, 5),
+    topDistricts: topDistrictRows.map((r) => ({ district: r.district ?? "Unknown", count: Number(r.count) })),
   };
 }
