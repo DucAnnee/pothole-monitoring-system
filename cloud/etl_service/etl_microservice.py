@@ -3,8 +3,9 @@ Generalized Kafka → Iceberg ETL Microservice
 
 Reads from configurable Kafka topics and writes to corresponding Iceberg tables.
 Currently supports:
-- pothole.raw.events.v1 → iceberg.city.raw_events
-- pothole.severity.score.v1 → iceberg.city.severity_scores
+- pothole.raw.events.v2 -> iceberg.city.raw_events
+- pothole.surface.area.v2 -> iceberg.city.surface_area_events
+- pothole.severity.score.v1 -> iceberg.city.severity_scores
 """
 
 import json
@@ -62,7 +63,7 @@ RAW_EVENT_AVRO_SCHEMA = """
 {
   "type": "record",
   "name": "RawEvent",
-  "namespace": "pothole.raw.v1",
+  "namespace": "pothole.raw.v2",
   "fields": [
     {"name": "event_id", "type": "string"},
     {"name": "vehicle_id", "type": "string"},
@@ -70,11 +71,8 @@ RAW_EVENT_AVRO_SCHEMA = """
     {"name": "gps_lat", "type": "double"},
     {"name": "gps_lon", "type": "double"},
     {"name": "gps_accuracy", "type": ["null", "double"], "default": null},
-    {"name": "raw_image_path", "type": "string"},
-    {"name": "bev_image_path", "type": ["null", "string"], "default": null},
+    {"name": "raw_image_object_key", "type": "string"},
     {"name": "original_mask", "type": {"type": "array", "items": {"type": "array", "items": "double"}}},
-    {"name": "bev_mask", "type": ["null", {"type": "array", "items": {"type": "array", "items": "double"}}], "default": null},
-    {"name": "surface_area_cm2", "type": "double"},
     {"name": "detection_confidence", "type": ["null", "double"], "default": null}
   ]
 }
@@ -96,6 +94,23 @@ SEVERITY_SCORE_AVRO_SCHEMA = """
 }
 """
 
+SURFACE_AREA_AVRO_SCHEMA = """
+{
+  "type": "record",
+  "name": "SurfaceAreaEstimate",
+  "namespace": "pothole.surface.v2",
+  "fields": [
+    {"name": "event_id", "type": "string"},
+    {"name": "raw_image_object_key", "type": "string"},
+    {"name": "bev_object_key", "type": "string"},
+    {"name": "bev_mask", "type": "string"},
+    {"name": "surface_area_cm2", "type": "double"},
+    {"name": "confidence", "type": ["null", "double"], "default": null},
+    {"name": "processed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}
+"""
+
 # ============================================================================
 # PYARROW SCHEMAS (for Iceberg tables)
 # Note: nullable=False for required fields to match Iceberg table schema
@@ -108,11 +123,8 @@ RAW_EVENTS_ARROW_SCHEMA = pa.schema([
     pa.field("gps_lat", pa.float64(), nullable=False),
     pa.field("gps_lon", pa.float64(), nullable=False),
     pa.field("gps_accuracy", pa.float64(), nullable=True),  # Optional
-    pa.field("raw_image_path", pa.string(), nullable=False),
-    pa.field("bev_image_path", pa.string(), nullable=True),  # Optional
+    pa.field("raw_image_object_key", pa.string(), nullable=False),
     pa.field("original_mask", pa.list_(pa.list_(pa.float64())), nullable=False),
-    pa.field("bev_mask", pa.list_(pa.list_(pa.float64())), nullable=True),  # Optional
-    pa.field("surface_area_cm2", pa.float64(), nullable=False),
     pa.field("detection_confidence", pa.float64(), nullable=True),  # Optional
     pa.field("ingested_at", pa.timestamp("us"), nullable=False),
 ])
@@ -124,6 +136,17 @@ SEVERITY_SCORES_ARROW_SCHEMA = pa.schema([
     pa.field("severity_score", pa.int32(), nullable=False),
     pa.field("severity_level", pa.string(), nullable=False),
     pa.field("calculated_at", pa.timestamp("us"), nullable=False),
+])
+
+SURFACE_AREA_ARROW_SCHEMA = pa.schema([
+    pa.field("event_id", pa.string(), nullable=False),
+    pa.field("raw_image_object_key", pa.string(), nullable=False),
+    pa.field("bev_object_key", pa.string(), nullable=False),
+    pa.field("bev_mask", pa.string(), nullable=False),
+    pa.field("surface_area_cm2", pa.float64(), nullable=False),
+    pa.field("confidence", pa.float64(), nullable=True),
+    pa.field("processed_at", pa.timestamp("us"), nullable=False),
+    pa.field("ingested_at", pa.timestamp("us"), nullable=False),
 ])
 
 # ============================================================================
@@ -141,11 +164,8 @@ CREATE TABLE IF NOT EXISTS iceberg.city.raw_events (
     gps_lon DOUBLE NOT NULL COMMENT 'Longitude',
     gps_accuracy DOUBLE COMMENT 'GPS accuracy in meters',
     
-    raw_image_path VARCHAR NOT NULL COMMENT 'S3 URI (s3://warehouse/raw_images/{event_id}.jpg)',
-    bev_image_path VARCHAR COMMENT 'S3 URI of birds-eye view transformed image',
+    raw_image_object_key VARCHAR NOT NULL COMMENT 'MinIO object key (raw_images/{event_id}.jpg)',
     original_mask ARRAY(ARRAY(DOUBLE)) NOT NULL COMMENT 'Polygon mask from edge detection [[x,y], ...]',
-    bev_mask ARRAY(ARRAY(DOUBLE)) COMMENT 'Polygon mask in BEV coordinates [[x,y], ...]',
-    surface_area_cm2 DOUBLE NOT NULL COMMENT 'Surface area computed at edge (cm²)',
     detection_confidence DOUBLE COMMENT 'Edge model confidence score',
     
     ingested_at TIMESTAMP(3) NOT NULL COMMENT 'When ingested into Iceberg'
@@ -173,6 +193,23 @@ WITH (
 )
 """
 
+CREATE_SURFACE_AREA_SQL = """
+CREATE TABLE IF NOT EXISTS iceberg.city.surface_area_events (
+    event_id VARCHAR NOT NULL COMMENT 'Unique event identifier',
+    raw_image_object_key VARCHAR NOT NULL COMMENT 'MinIO key for raw image',
+    bev_object_key VARCHAR NOT NULL COMMENT 'MinIO key for BEV image (bev_images/{event_id}.jpg)',
+    bev_mask VARCHAR NOT NULL COMMENT 'JSON-encoded BEV mask polygon [[x,y], ...]',
+    surface_area_cm2 DOUBLE NOT NULL COMMENT 'Estimated pothole surface area',
+    confidence DOUBLE COMMENT 'Estimation confidence (0.0=failed, 1.0=success)',
+    processed_at TIMESTAMP(3) NOT NULL COMMENT 'When BEV transform was computed',
+    ingested_at TIMESTAMP(3) NOT NULL COMMENT 'When ingested into Iceberg'
+)
+WITH (
+    format = 'PARQUET',
+    partitioning = ARRAY['day(processed_at)']
+)
+"""
+
 # ============================================================================
 # TRANSFORMATION FUNCTIONS
 # ============================================================================
@@ -192,7 +229,7 @@ def _convert_timestamp(ts_value) -> datetime:
 
 
 def transform_raw_event(avro_record: Dict[str, Any]) -> Dict[str, Any]:
-    """Transform raw event from Kafka to Iceberg schema."""
+    """Transform raw event from Kafka v2 to Iceberg schema."""
     now = datetime.now(timezone.utc)
     
     # Convert timestamp (handles both datetime and long formats)
@@ -205,11 +242,8 @@ def transform_raw_event(avro_record: Dict[str, Any]) -> Dict[str, Any]:
         "gps_lat": avro_record['gps_lat'],
         "gps_lon": avro_record['gps_lon'],
         "gps_accuracy": avro_record.get('gps_accuracy'),
-        "raw_image_path": avro_record['raw_image_path'],
-        "bev_image_path": avro_record.get('bev_image_path'),
+        "raw_image_object_key": avro_record['raw_image_object_key'],
         "original_mask": avro_record['original_mask'],
-        "bev_mask": avro_record.get('bev_mask'),
-        "surface_area_cm2": avro_record['surface_area_cm2'],
         "detection_confidence": avro_record.get('detection_confidence'),
         "ingested_at": now.replace(tzinfo=None),
     }
@@ -227,6 +261,22 @@ def transform_severity_score(avro_record: Dict[str, Any]) -> Dict[str, Any]:
         "severity_score": avro_record['severity_score'],
         "severity_level": avro_record['severity_level'],
         "calculated_at": calculated_at,
+    }
+
+
+def transform_surface_area(avro_record: Dict[str, Any]) -> Dict[str, Any]:
+    """Transform surface area event from Kafka to Iceberg schema."""
+    now = datetime.now(timezone.utc)
+    processed_at = _convert_timestamp(avro_record['processed_at'])
+    return {
+        "event_id": avro_record['event_id'],
+        "raw_image_object_key": avro_record['raw_image_object_key'],
+        "bev_object_key": avro_record['bev_object_key'],
+        "bev_mask": avro_record['bev_mask'],
+        "surface_area_cm2": avro_record['surface_area_cm2'],
+        "confidence": avro_record.get('confidence'),
+        "processed_at": processed_at,
+        "ingested_at": now.replace(tzinfo=None),
     }
 
 
@@ -251,12 +301,20 @@ class TopicTableMapping:
 # Define all topic-table mappings
 TOPIC_TABLE_MAPPINGS: List[TopicTableMapping] = [
     TopicTableMapping(
-        kafka_topic="pothole.raw.events.v1",
+        kafka_topic="pothole.raw.events.v2",
         iceberg_table="raw_events",
         avro_schema=RAW_EVENT_AVRO_SCHEMA,
         arrow_schema=RAW_EVENTS_ARROW_SCHEMA,
         create_table_sql=CREATE_RAW_EVENTS_SQL,
         transform_fn=transform_raw_event,
+    ),
+    TopicTableMapping(
+        kafka_topic="pothole.surface.area.v2",
+        iceberg_table="surface_area_events",
+        avro_schema=SURFACE_AREA_AVRO_SCHEMA,
+        arrow_schema=SURFACE_AREA_ARROW_SCHEMA,
+        create_table_sql=CREATE_SURFACE_AREA_SQL,
+        transform_fn=transform_surface_area,
     ),
     TopicTableMapping(
         kafka_topic="pothole.severity.score.v1",
@@ -629,13 +687,13 @@ class MultiBatchProcessor:
 # ============================================================================
 def main():
     print("=" * 70)
-    print("GENERALIZED KAFKA → ICEBERG ETL PIPELINE")
+    print("GENERALIZED KAFKA -> ICEBERG ETL PIPELINE")
     print("=" * 70)
     
     # Print configured mappings
     print("\n[CONFIG] Topic-Table Mappings:")
     for mapping in TOPIC_TABLE_MAPPINGS:
-        print(f"  - {mapping.kafka_topic} → iceberg.{ICEBERG_NAMESPACE}.{mapping.iceberg_table}")
+        print(f"  - {mapping.kafka_topic} -> iceberg.{ICEBERG_NAMESPACE}.{mapping.iceberg_table}")
     print()
     
     # Initialize Trino connection

@@ -143,7 +143,7 @@ services:
           # Core topics
           # ----------------------------
 
-          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9094 --create --topic pothole.raw.events.v1 \
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9094 --create --topic pothole.raw.events.v2 \
               --partitions 12 --replication-factor 3 \
               --if-not-exists \
               --config retention.ms=604800000 --config cleanup.policy=delete
@@ -153,7 +153,7 @@ services:
               --if-not-exists \
               --config retention.ms=259200000 --config cleanup.policy=delete
 
-          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9094 --create --topic pothole.surface.area.v1 \
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9094 --create --topic pothole.surface.area.v2 \
               --partitions 12 --replication-factor 3 \
               --if-not-exists \
               --config retention.ms=259200000 --config cleanup.policy=delete
@@ -261,6 +261,26 @@ services:
     networks:
       - kafka-net
 
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: postgis-serving
+    environment:
+      POSTGRES_USER: serving
+      POSTGRES_PASSWORD: servingpassword
+      POSTGRES_DB: postgis_serving
+    ports:
+      - "5437:5432"
+    volumes:
+      - postgis-data:/var/lib/postgresql/data
+      - ./lakehouse/postgis/001_serving_schema.sql:/docker-entrypoint-initdb.d/001_serving_schema.sql:ro
+    networks:
+      - kafka-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U serving -d postgis_serving"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   pgadmin:
     image: dpage/pgadmin4
     container_name: pgadmin
@@ -293,6 +313,67 @@ services:
     networks:
       - kafka-net
     restart: on-failure:5
+
+
+  # ==========================================================
+  #  FLINK STREAMHOUSE PROCESSING
+  # ==========================================================
+  flink-jobmanager:
+    image: flink:1.19-scala_2.12-java17
+    container_name: flink-jobmanager
+    command: jobmanager
+    ports:
+      - "8084:8081"
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+    volumes:
+      - ./lakehouse/flink/sql:/opt/pothole-lakehouse/sql:ro
+      - ./container-conf/flink/lib/iceberg-aws-bundle-1.10.1.jar:/opt/flink/lib/iceberg-aws-bundle-1.10.1.jar:ro
+      - ./container-conf/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:/opt/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:ro
+      - ./container-conf/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:/opt/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:ro
+      - ./container-conf/flink/lib/flink-avro-1.19.3.jar:/opt/flink/lib/flink-avro-1.19.3.jar:ro
+      - ./container-conf/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:/opt/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:ro
+      - ./container-conf/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:/opt/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:ro
+      - ./container-conf/flink/lib/postgresql-42.7.11.jar:/opt/flink/lib/postgresql-42.7.11.jar:ro
+      - ./container-conf/flink/lib/hadoop-client-api-3.3.6.jar:/opt/flink/lib/hadoop-client-api-3.3.6.jar:ro
+      - ./container-conf/flink/lib/hadoop-client-runtime-3.3.6.jar:/opt/flink/lib/hadoop-client-runtime-3.3.6.jar:ro
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_started
+      polaris:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      postgis:
+        condition: service_healthy
+    networks:
+      - kafka-net
+
+  flink-taskmanager:
+    image: flink:1.19-scala_2.12-java17
+    container_name: flink-taskmanager
+    command: taskmanager
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+      - TASK_MANAGER_NUMBER_OF_TASK_SLOTS=4
+    volumes:
+      - ./lakehouse/flink/sql:/opt/pothole-lakehouse/sql:ro
+      - ./container-conf/flink/lib/iceberg-aws-bundle-1.10.1.jar:/opt/flink/lib/iceberg-aws-bundle-1.10.1.jar:ro
+      - ./container-conf/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:/opt/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:ro
+      - ./container-conf/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:/opt/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:ro
+      - ./container-conf/flink/lib/flink-avro-1.19.3.jar:/opt/flink/lib/flink-avro-1.19.3.jar:ro
+      - ./container-conf/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:/opt/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:ro
+      - ./container-conf/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:/opt/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:ro
+      - ./container-conf/flink/lib/postgresql-42.7.11.jar:/opt/flink/lib/postgresql-42.7.11.jar:ro
+      - ./container-conf/flink/lib/hadoop-client-api-3.3.6.jar:/opt/flink/lib/hadoop-client-api-3.3.6.jar:ro
+      - ./container-conf/flink/lib/hadoop-client-runtime-3.3.6.jar:/opt/flink/lib/hadoop-client-runtime-3.3.6.jar:ro
+    depends_on:
+      flink-jobmanager:
+        condition: service_started
+    networks:
+      - kafka-net
 
 
   # ==========================================================
@@ -331,7 +412,7 @@ services:
       - >-
         echo Creating MinIO bucket...;
         mc alias set admin http://minio:9000 minioadmin minioadmin;
-        mc mb admin/warehouse;
+        mc mb --ignore-existing admin/warehouse;
         mc ls admin;
         echo Bucket setup complete.;
     networks:
@@ -499,6 +580,39 @@ services:
   #     - kafka-net
   #   restart: unless-stopped
 
+  # ==========================================================
+  #  TRITON INFERENCE SERVER (GPU model serving)
+  # ==========================================================
+  triton-inference-server:
+    image: nvcr.io/nvidia/tritonserver:24.12-py3
+    container_name: triton-inference-server
+    ports:
+      - "8000:8000"   # HTTP inference
+      - "8001:8001"   # gRPC inference
+      - "8002:8002"   # metrics (Prometheus)
+    volumes:
+      - ./cloud/triton_inference_server/triton_model_repo:/models
+    command: >
+      tritonserver
+      --model-repository=/models
+      --log-verbose=0
+      --exit-on-error=false
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/v2/health/ready" ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - kafka-net
+
 networks:
   kafka-net:
     name: kafka-net
@@ -510,5 +624,6 @@ volumes:
   kafka-data-3:
   minio-data:
   postgres-data:
+  postgis-data:
   grafana-data:
   redis-data:

@@ -12,7 +12,7 @@ kafka:
   consumer_group_id: "final-enrichment-service-v2"
   
   # Input topics
-  raw_events_topic: "pothole.raw.events.v1"
+  raw_events_topic: "pothole.raw.events.v2"
   severity_score_topic: "pothole.severity.score.v1"
 
 # Trino/Iceberg configuration

@@ -1,0 +1,50 @@
+kafka:
+  source_topic: "pothole.surface.area.v2"
+  output_topic: "pothole.depth.v1"
+  consumer_group_id: "depth-estimator-e2e"
+  bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}"
+  schema_registry_url: "${SCHEMA_REGISTRY_URL:http://localhost:8082}"
+  max_retries: 5
+  retry_delay: 2
+
+minio:
+  endpoint: "${MINIO_ENDPOINT:localhost:9000}"
+  access_key: "${MINIO_ACCESS_KEY:minioadmin}"
+  secret_key: "${MINIO_SECRET_KEY:minioadmin}"
+  bucket: "${MINIO_BUCKET:warehouse}"
+  secure: false
+  max_retries: 5
+  retry_delay: 2
+
+depth_model:
+  model_type: "vitl"
+  model_path: "Depth-Anything-V2/depth_anything_v2_vitl.pth"
+  input_size: 518
+  device: "cpu"
+  model_configs:
+    vits:
+      encoder: "vits"
+      features: 64
+      out_channels: [48, 96, 192, 384]
+    vitb:
+      encoder: "vitb"
+      features: 128
+      out_channels: [96, 192, 384, 768]
+    vitl:
+      encoder: "vitl"
+      features: 256
+      out_channels: [256, 512, 1024, 1024]
+    vitg:
+      encoder: "vitg"
+      features: 384
+      out_channels: [1536, 1536, 1536, 1536]
+
+processing:
+  depth_min_cm: 1.0
+  depth_max_cm: 50.0
+  confidence_min: 0.75
+  confidence_max: 0.98
+
+logging:
+  level: "INFO"
+  show_progress: true

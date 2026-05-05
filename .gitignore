@@ -15,6 +15,10 @@
 /.next/
 /out/
 
+# react router
+.react-router/
+build/
+
 # production
 /build
 
@@ -85,6 +89,7 @@ htmlcov/
 *.pth
 *.pt
 *.onnx
+*.onnx.data
 *.engine
 *.h5
 *.keras
@@ -120,3 +125,17 @@ Thumbs.db
 *.orig
 tmp/
 temp/
+
+CLAUDE.md
+**/.claude/
+**/*.draft.md
+docs/superpowers/
+dashboard-ui-reference/
+
+AGENTS.md
+.codex/
+
+graphify-out/
+.graphify*
+
+*.zip

@@ -1,0 +1,249 @@
+import pg from "pg";
+import type { PotholeDetail, PotholeMarker } from "~/lib/trino.server";
+
+const { Pool } = pg;
+
+type PointGeometry = {
+  type: "Point";
+  coordinates: [number, number];
+};
+
+const POSTGIS_HOST = process.env.POSTGIS_HOST ?? "localhost";
+const POSTGIS_PORT = Number(process.env.POSTGIS_PORT ?? "5437");
+const POSTGIS_USER = process.env.POSTGIS_USER ?? "serving";
+const POSTGIS_PASSWORD = process.env.POSTGIS_PASSWORD ?? "servingpassword";
+const POSTGIS_DATABASE = process.env.POSTGIS_DATABASE ?? "postgis_serving";
+
+let pool: pg.Pool | null = null;
+
+function getPool() {
+  pool ??= new Pool({
+    host: POSTGIS_HOST,
+    port: POSTGIS_PORT,
+    user: POSTGIS_USER,
+    password: POSTGIS_PASSWORD,
+    database: POSTGIS_DATABASE,
+    max: 10,
+  });
+  return pool;
+}
+
+async function queryPostgis<T>(sql: string, params: unknown[] = []): Promise<T[]> {
+  const result = await getPool().query(sql, params);
+  return result.rows as T[];
+}
+
+export interface RoadDefectFilters {
+  bbox?: string | null;
+  datetime?: string | null;
+  district?: string | null;
+  ward?: string | null;
+  roadSegmentId?: string | null;
+  severityLevel?: string | null;
+  status?: string | null;
+  limit?: string | null;
+  offset?: string | null;
+}
+
+export interface RoadDefectFeatureRow {
+  defect_id: string;
+  defect_type: string;
+  status: string;
+  severity_score: number | null;
+  severity_level: string | null;
+  confidence: number | null;
+  quality_flags: unknown;
+  geometry: PointGeometry;
+  road_segment_id: string | null;
+  district: string | null;
+  ward: string | null;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  observation_count: number;
+  latest_raw_image_object_key: string | null;
+  latest_bev_object_key: string | null;
+  longitude: number;
+  latitude: number;
+}
+
+type GeoJsonFeature = {
+  type: "Feature";
+  id: string;
+  geometry: PointGeometry;
+  properties: Record<string, unknown>;
+};
+
+function parsePositiveInt(value: string | null | undefined, fallback: number, max: number) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.min(parsed, max);
+}
+
+function appendWhere(
+  where: string[],
+  params: unknown[],
+  condition: string,
+  ...values: unknown[]
+) {
+  const offset = params.length;
+  params.push(...values);
+  where.push(condition.replace(/\$(\d+)/g, (_, index) => `$${offset + Number(index)}`));
+}
+
+function buildRoadDefectWhere(filters: RoadDefectFilters) {
+  const where: string[] = [];
+  const params: unknown[] = [];
+
+  if (filters.bbox) {
+    const coords = filters.bbox.split(",").map((v) => Number.parseFloat(v.trim()));
+    if (coords.length !== 4 || coords.some((v) => !Number.isFinite(v))) {
+      throw new Response("Invalid bbox. Expected minLon,minLat,maxLon,maxLat.", { status: 400 });
+    }
+    appendWhere(
+      where,
+      params,
+      "geometry && ST_MakeEnvelope($1, $2, $3, $4, 4326)",
+      coords[0],
+      coords[1],
+      coords[2],
+      coords[3]
+    );
+  }
+
+  if (filters.datetime) {
+    const [start, end] = filters.datetime.split("/");
+    if (end) {
+      appendWhere(where, params, "last_seen_at >= $1::timestamptz AND last_seen_at <= $2::timestamptz", start, end);
+    } else {
+      appendWhere(where, params, "last_seen_at >= $1::timestamptz", start);
+    }
+  }
+
+  if (filters.district) appendWhere(where, params, "district = $1", filters.district);
+  if (filters.ward) appendWhere(where, params, "ward = $1", filters.ward);
+  if (filters.roadSegmentId) appendWhere(where, params, "road_segment_id = $1", filters.roadSegmentId);
+  if (filters.severityLevel) appendWhere(where, params, "severity_level = $1", filters.severityLevel);
+  if (filters.status) appendWhere(where, params, "status = $1", filters.status);
+
+  return { clause: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
+}
+
+const ROAD_DEFECT_SELECT = `
+  SELECT
+    defect_id,
+    defect_type,
+    status,
+    severity_score,
+    severity_level,
+    confidence,
+    quality_flags,
+    ST_AsGeoJSON(geometry)::json AS geometry,
+    road_segment_id,
+    district,
+    ward,
+    first_seen_at,
+    last_seen_at,
+    observation_count,
+    latest_raw_image_object_key,
+    latest_bev_object_key,
+    ST_X(geometry) AS longitude,
+    ST_Y(geometry) AS latitude
+  FROM serving.current_road_defects
+`;
+
+export async function queryRoadDefectItems(filters: RoadDefectFilters = {}) {
+  const limit = parsePositiveInt(filters.limit, 100, 500);
+  const offset = parsePositiveInt(filters.offset, 0, 100000);
+  const { clause, params } = buildRoadDefectWhere(filters);
+  params.push(limit, offset);
+  return queryPostgis<RoadDefectFeatureRow>(
+    `${ROAD_DEFECT_SELECT}
+     ${clause}
+     ORDER BY last_seen_at DESC NULLS LAST, defect_id
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+}
+
+export async function queryRoadDefectById(defectId: string) {
+  const rows = await queryPostgis<RoadDefectFeatureRow>(
+    `${ROAD_DEFECT_SELECT} WHERE defect_id = $1 LIMIT 1`,
+    [defectId]
+  );
+  return rows[0] ?? null;
+}
+
+export function toRoadDefectFeature(row: RoadDefectFeatureRow): GeoJsonFeature {
+  const {
+    defect_id,
+    geometry,
+    longitude: _longitude,
+    latitude: _latitude,
+    ...properties
+  } = row;
+
+  return {
+    type: "Feature",
+    id: defect_id,
+    geometry,
+    properties: {
+      ...properties,
+      defect_id,
+    },
+  };
+}
+
+export async function queryMapPotholes(
+  lat?: number,
+  lon?: number,
+  radiusKm = 1
+): Promise<PotholeMarker[]> {
+  const filters: RoadDefectFilters = { limit: "30" };
+  let bbox: string | undefined;
+
+  if (lat !== undefined && lon !== undefined) {
+    const deg = radiusKm * 0.009;
+    const cosLat = Math.max(Math.cos((lat * Math.PI) / 180), 0.1);
+    bbox = `${lon - deg / cosLat},${lat - deg},${lon + deg / cosLat},${lat + deg}`;
+  }
+
+  const rows = await queryRoadDefectItems({ ...filters, bbox });
+  return rows.map((row) => ({
+    pothole_id: row.defect_id,
+    gps_lat: row.latitude,
+    gps_lon: row.longitude,
+    severity_level: row.severity_level ?? "UNKNOWN",
+    status: row.status,
+    district: row.district ?? undefined,
+    reported_at: row.first_seen_at ?? undefined,
+  }));
+}
+
+export async function queryPotholeDetail(id: string): Promise<PotholeDetail | null> {
+  const row = await queryRoadDefectById(id);
+  if (!row) return null;
+
+  return {
+    pothole_id: row.defect_id,
+    first_event_id: "",
+    gps_lat: row.latitude,
+    gps_lon: row.longitude,
+    city: "",
+    ward: row.ward ?? "",
+    district: row.district ?? "",
+    street_name: "",
+    road_id: row.road_segment_id ?? "",
+    depth_cm: 0,
+    surface_area_cm2: 0,
+    severity_score: row.severity_score ?? 0,
+    severity_level: row.severity_level ?? "UNKNOWN",
+    status: row.status,
+    detected_at: row.first_seen_at ?? "",
+    in_progress_at: null,
+    fixed_at: null,
+    last_updated: row.last_seen_at ?? "",
+    observation_count: row.observation_count,
+    raw_image_path: row.latest_raw_image_object_key,
+    bev_image_path: row.latest_bev_object_key,
+  };
+}
