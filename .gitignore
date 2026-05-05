@@ -139,3 +139,5 @@ graphify-out/
 .graphify*
 
 *.zip
+
+*.jar
