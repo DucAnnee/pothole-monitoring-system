@@ -8,7 +8,6 @@ import queue
 import signal
 import threading
 import numpy as np
-from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -16,6 +15,8 @@ from typing import Any, Mapping
 from uploader import Uploader
 from config_loader import ConfigLoader, load_config
 from data_models import DetectionData, DetectionMask, ModelType, RuntimeModel
+from device_state import load_device_state
+from gps_provider import build_gps_provider
 from mlops.model_manifest import ManifestError
 from mlops.model_registry import ModelRegistry, RegistryError
 from mlops.model_updater import UpdateError, deploy_from_manifest
@@ -58,11 +59,15 @@ class EdgePipeline:
         self.video_path: str | None = (
             video_path if video_path is not None else self.config.get_video_path()
         )
-        self.vehicle_id = f"vehicle-{uuid4().hex[:8]}"
+        self.device_state = load_device_state()
+        self.vehicle_id = self.device_state["vehicle_id"]
+        self.device_id = self.device_state["device_id"]
+        self.gps_provider = build_gps_provider(self.config)
         log_event(
             self.logger,
             "pipeline_init",
             vehicle_id=self.vehicle_id,
+            device_id=self.device_id,
             config_path=config_path,
             terminal_output=(
                 self.config.get_terminal_output_enabled()
@@ -85,7 +90,12 @@ class EdgePipeline:
         # modules init
         self.segmenter = self._initialize_segmenter()
         self.deduplicator: DetectionDeduplicator | None = self._initialize_deduplicator()
-        self.uploader = Uploader(self.config, self.vehicle_id)
+        self.uploader = Uploader(
+            self.config,
+            self.vehicle_id,
+            device_id=self.device_id,
+            gps_provider=self.gps_provider,
+        )
 
         # signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -540,6 +550,7 @@ class EdgePipeline:
             self.logger,
             "pipeline_start",
             vehicle_id=self.vehicle_id,
+            device_id=self.device_id,
             model_id=self.runtime_model.model_id,
             model_type=self.runtime_model.model_type,
             model_path=self.runtime_model.model_path,
