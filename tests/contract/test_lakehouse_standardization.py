@@ -144,6 +144,8 @@ def test_flink_silver_declares_quality_flag_semantics(repo_root: Path):
     flink_dir = repo_root / "lakehouse" / "flink" / "sql"
     silver = read(flink_dir / "020_silver_materialization.sql").lower()
     gold = read(flink_dir / "030_gold_materialization.sql").lower()
+    silver_compact = " ".join(silver.split())
+    gold_compact = " ".join(gold.split())
 
     assert "options('streaming'='true'" in silver
     assert "monitor-interval" in silver
@@ -151,7 +153,10 @@ def test_flink_silver_declares_quality_flag_semantics(repo_root: Path):
     assert "monitor-interval" in gold
     assert "insert into gold.current_road_defects" in gold
     assert "insert into gold.defect_observation_history" in gold
-    assert "group by o.defect_id" not in gold
+    assert " left join " not in f" {silver_compact} "
+    assert " group by " not in f" {silver_compact} "
+    assert " left join " not in f" {gold_compact} "
+    assert " group by " not in f" {gold_compact} "
 
     for flag in [
         "gps_accuracy_missing",
@@ -165,9 +170,9 @@ def test_flink_silver_declares_quality_flag_semantics(repo_root: Path):
 
     assert "o.quality_flags_json as quality_flags_json" in gold
     assert "'[]' as quality_flags_json" not in silver
-    assert "d.depth_cm is null and sev.severity_score is null" in silver
-    assert "d.depth_cm is null" in silver
-    assert "sev.severity_score is null" in silver
+    assert "depth_cm is null and severity_score is null" in silver
+    assert "depth_cm is null" in silver
+    assert "severity_score is null" in silver
 
 
 def test_flink_kafka_sources_alias_active_avro_fields(repo_root: Path):

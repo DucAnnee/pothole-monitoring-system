@@ -46,4 +46,4 @@ SELECT
   latest_raw_image_object_key,
   latest_bev_object_key,
   updated_at
-FROM gold.current_road_defects;
+FROM gold.current_road_defects /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */;
