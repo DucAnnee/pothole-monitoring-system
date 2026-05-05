@@ -51,3 +51,16 @@ def test_severity_produce_flush_raises_before_commit_on_delivery_error(repo_root
 
     with pytest.raises(RuntimeError):
         module.produce_and_flush(Producer(), "topic", "key", b"value")
+
+
+@pytest.mark.unit
+def test_validate_depth_record_rejects_missing_depth_cm(repo_root, load_module):
+    pytest.importorskip("confluent_kafka")
+    module = load_module(
+        "severity_aggregator_validation_unit",
+        repo_root / "cloud" / "severity_calculation_service" / "severity_aggregator.py",
+        repo_root / "cloud" / "severity_calculation_service",
+    )
+
+    with pytest.raises(ValueError, match="depth_cm"):
+        module.validate_depth_record({"event_id": "evt-1", "surface_area_cm2": 42.0})

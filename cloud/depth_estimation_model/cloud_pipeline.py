@@ -29,6 +29,18 @@ from minio.error import S3Error
 
 from config_loader import ConfigLoader
 
+try:
+    from cloud.shared.dlq import send_to_dlq
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from shared.dlq import send_to_dlq
+
+DLQ_TOPIC = "pothole.depth.dlq.v1"
+SERVICE_NAME = "depth-estimation"
+
 
 # ============================================================================
 # AVRO SCHEMAS
@@ -272,6 +284,14 @@ def download_image_from_minio(client: Minio, s3_path: str, bucket: str) -> Optio
         return None
 
 
+def classify_surface_event_failure(event: dict) -> str | None:
+    if not event.get("raw_image_object_key") and not event.get("bev_object_key"):
+        return "missing_raw_and_bev_image_object_key"
+    if event.get("surface_area_cm2") is None:
+        return "missing_surface_area_cm2"
+    return None
+
+
 # ============================================================================
 # KAFKA
 # ============================================================================
@@ -409,6 +429,7 @@ def main():
 
     consumer = create_consumer(config)
     producer = create_producer(config)
+    dlq_producer = create_producer(config)
     deserializer = create_deserializer(config)
     serializer = create_serializer(config)
 
@@ -430,16 +451,40 @@ def main():
             msg = consumer.poll(timeout=0.05)
 
             if msg is not None and not msg.error():
+                surface_event = None
                 try:
                     surface_event = deserializer(
                         msg.value(), SerializationContext(source_topic, MessageField.VALUE)
                     )
                 except Exception as e:
                     print(f"[ERROR] Deserialization failed: {e}")
-                    surface_event = None
+                    send_to_dlq(
+                        dlq_producer,
+                        DLQ_TOPIC,
+                        source_topic,
+                        SERVICE_NAME,
+                        e,
+                        msg.value(),
+                    )
+                    consumer.commit(message=msg)
 
                 if surface_event is not None:
-                    event_id = surface_event["event_id"]
+                    event_id = surface_event.get("event_id")
+                    failure_reason = classify_surface_event_failure(surface_event)
+                    if failure_reason is not None:
+                        print(f"[ERROR] Malformed surface event {event_id}: {failure_reason}")
+                        send_to_dlq(
+                            dlq_producer,
+                            DLQ_TOPIC,
+                            source_topic,
+                            SERVICE_NAME,
+                            ValueError(failure_reason),
+                            surface_event,
+                            key=event_id,
+                        )
+                        consumer.commit(message=msg)
+                        continue
+
                     bev_key  = surface_event.get("bev_object_key", "")
                     raw_key  = surface_event["raw_image_object_key"]
 
@@ -456,7 +501,17 @@ def main():
                     if image_bytes is not None:
                         accumulator.add(PendingEvent(msg, surface_event, image_bytes))
                     else:
-                        print(f"[ERROR] Could not download any image for event {event_id} — skipping")
+                        print(f"[ERROR] Could not download any image for event {event_id} - skipping")
+                        send_to_dlq(
+                            dlq_producer,
+                            DLQ_TOPIC,
+                            source_topic,
+                            SERVICE_NAME,
+                            "could_not_download_image",
+                            surface_event,
+                            key=event_id,
+                        )
+                        consumer.commit(message=msg)
 
             elif msg is not None and msg.error():
                 print(f"[ERROR] Consumer error: {msg.error()}")
@@ -471,6 +526,7 @@ def main():
     finally:
         print("[INFO] Flushing producer ...")
         producer.flush()
+        dlq_producer.flush()
         print("[INFO] Closing consumer ...")
         consumer.close()
         print("[INFO] Shutdown complete.")

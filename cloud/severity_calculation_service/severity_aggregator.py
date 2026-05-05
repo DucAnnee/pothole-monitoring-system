@@ -14,6 +14,15 @@ from confluent_kafka.serialization import MessageField, SerializationContext
 
 from config_loader import ConfigLoader
 
+try:
+    from cloud.shared.dlq import send_to_dlq
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from shared.dlq import send_to_dlq
+
 # ============================================================================
 # CONFIGURATION - Load from config.yaml
 # ============================================================================
@@ -32,6 +41,8 @@ MAX_SCORE = config.max_score
 THRESHOLDS = config.thresholds
 
 LOG_TIMEOUT_WARNINGS = config.log_timeout_warnings
+DLQ_TOPIC = "pothole.severity.score.dlq.v1"
+SERVICE_NAME = "severity"
 
 # ============================================================================
 # AVRO SCHEMAS
@@ -143,6 +154,13 @@ def get_severity_level(severity_score: int) -> str:
     return "CRITICAL"
 
 
+def validate_depth_record(record: dict) -> None:
+    required_fields = ("event_id", "depth_cm", "surface_area_cm2")
+    missing = [field for field in required_fields if field not in record or record[field] is None]
+    if missing:
+        raise ValueError(f"Missing required depth record field(s): {', '.join(missing)}")
+
+
 # ============================================================================
 # KAFKA SETUP
 # ============================================================================
@@ -225,6 +243,7 @@ def main():
 
     consumer = create_consumer()
     producer = create_producer()
+    dlq_producer = create_producer()
     depth_deserializer = create_deserializer()
     severity_serializer = create_serializer()
 
@@ -243,6 +262,7 @@ def main():
                 print(f"[ERROR] Consumer error: {msg.error()}")
                 continue
 
+            record = None
             try:
                 record = depth_deserializer(
                     msg.value(),
@@ -250,6 +270,7 @@ def main():
                 )
                 if not record:
                     continue
+                validate_depth_record(record)
 
                 event_id = record["event_id"]
                 depth_cm = record["depth_cm"]
@@ -282,6 +303,18 @@ def main():
 
             except Exception as e:
                 print(f"[ERROR] Failed to process message: {e}")
+                payload = record if record is not None else msg.value()
+                key = payload.get("event_id") if isinstance(payload, dict) else None
+                send_to_dlq(
+                    dlq_producer,
+                    DLQ_TOPIC,
+                    DEPTH_TOPIC,
+                    SERVICE_NAME,
+                    e,
+                    payload,
+                    key=key,
+                )
+                consumer.commit(message=msg)
                 continue
 
     except KeyboardInterrupt:
@@ -290,6 +323,7 @@ def main():
     finally:
         print(f"\n[STATS] Processed: {processed_count} severity scores")
         producer.flush()
+        dlq_producer.flush()
         consumer.close()
         print("[INFO] Shutdown complete.")
 
