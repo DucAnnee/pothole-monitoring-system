@@ -157,6 +157,9 @@ def test_flink_silver_declares_quality_flag_semantics(repo_root: Path):
 
     assert "max(o.quality_flags_json) as quality_flags_json" in gold
     assert "'[]' as quality_flags_json" not in silver
+    assert "d.depth_cm is null and sev.severity_score is null" in silver
+    assert "d.depth_cm is null" in silver
+    assert "sev.severity_score is null" in silver
 
 
 def test_flink_kafka_sources_alias_active_avro_fields(repo_root: Path):

@@ -61,9 +61,9 @@ SELECT
   'reported' AS status,
   r.event_id AS evidence_id,
   CASE
-    WHEN d.event_id IS NULL AND sev.event_id IS NULL THEN '["DEPTH_MISSING","SEVERITY_MISSING"]'
-    WHEN d.event_id IS NULL THEN '["DEPTH_MISSING"]'
-    WHEN sev.event_id IS NULL THEN '["SEVERITY_MISSING"]'
+    WHEN d.depth_cm IS NULL AND sev.severity_score IS NULL THEN '["DEPTH_MISSING","SEVERITY_MISSING"]'
+    WHEN d.depth_cm IS NULL THEN '["DEPTH_MISSING"]'
+    WHEN sev.severity_score IS NULL THEN '["SEVERITY_MISSING"]'
     ELSE '[]'
   END AS quality_flags_json,
   CURRENT_TIMESTAMP AS created_at
