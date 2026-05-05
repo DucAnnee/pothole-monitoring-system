@@ -28,22 +28,26 @@ CREATE TEMPORARY TABLE serving_current_road_defects_jdbc (
 
 INSERT INTO serving_current_road_defects_jdbc
 SELECT
-  defect_id,
-  defect_type,
-  status,
-  severity_score,
-  severity_level,
-  confidence,
-  quality_flags_json,
-  longitude,
-  latitude,
-  road_segment_id,
-  district,
-  ward,
-  first_seen_at,
-  last_seen_at,
-  observation_count,
-  latest_raw_image_object_key,
-  latest_bev_object_key,
-  updated_at
-FROM gold.current_road_defects /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */;
+  g.defect_id,
+  g.defect_type,
+  g.status,
+  g.severity_score,
+  g.severity_level,
+  COALESCE(g.confidence, d.detection_confidence) AS confidence,
+  g.quality_flags_json,
+  d.gps_lon AS longitude,
+  d.gps_lat AS latitude,
+  g.road_segment_id,
+  g.district,
+  g.ward,
+  g.first_seen_at,
+  g.last_seen_at,
+  g.observation_count,
+  COALESCE(g.latest_raw_image_object_key, d.raw_image_object_key) AS latest_raw_image_object_key,
+  COALESCE(g.latest_bev_object_key, e.bev_object_key) AS latest_bev_object_key,
+  g.updated_at
+FROM gold.current_road_defects /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */ g
+JOIN silver.detections /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */ d
+  ON g.defect_id = CONCAT('defect-', d.event_id)
+LEFT JOIN silver.defect_evidence /*+ OPTIONS('streaming'='true', 'monitor-interval'='5s') */ e
+  ON g.defect_id = CONCAT('defect-', e.event_id);

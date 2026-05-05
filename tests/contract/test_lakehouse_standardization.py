@@ -137,7 +137,12 @@ def test_flink_sql_pins_current_topics_and_medallion_flow(repo_root: Path):
     projection = read(flink_dir / "040_gold_to_postgis_projection.sql").lower()
     assert "jdbc:postgresql://postgis:5432/postgis_serving" in projection
     assert "serving.current_road_defects_projection_inbox" in projection
+    assert "primary key (defect_id) not enforced" in projection
     assert "from gold.current_road_defects" in projection
+    assert "join silver.detections" in projection
+    assert "g.defect_id = concat('defect-', d.event_id)" in projection
+    assert "d.gps_lon as longitude" in projection
+    assert "d.gps_lat as latitude" in projection
 
 
 def test_flink_silver_declares_quality_flag_semantics(repo_root: Path):
