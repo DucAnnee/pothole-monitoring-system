@@ -33,6 +33,15 @@ files in this order:
 3. `030_gold_materialization.sql`
 4. `040_gold_to_postgis_projection.sql`
 
+By default the script refuses to submit a second copy when Flink already has
+jobs in `RUNNING`, `CREATED`, or `RESTARTING` state. Stop the existing jobs
+before rerunning the bootstrap, or use this only for intentional parallel
+experiments:
+
+```powershell
+scripts/start-lakehouse-jobs.ps1 -AllowDuplicateJobs
+```
+
 Airflow is not part of this milestone. Flink owns the continuous
 transformations; a scheduler can be added later for batch operations.
 

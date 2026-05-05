@@ -231,3 +231,14 @@ def test_lakehouse_bootstrap_script_submits_standard_jobs(repo_root: Path):
         previous_index = current_index
 
     assert "docker exec -d flink-jobmanager" in script
+    for expected_bootstrap_guard in [
+        "allowduplicatejobs",
+        "jobs/overview",
+        "polaris-setup",
+        "wait-containerhealthy",
+        "wait-containercompleted",
+        "use catalog lakehouse",
+        "/tmp/pothole-lakehouse-",
+        'if ($filename -ne "010_kafka_to_bronze.sql")',
+    ]:
+        assert expected_bootstrap_guard in script
