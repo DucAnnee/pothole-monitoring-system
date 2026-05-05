@@ -149,6 +149,7 @@ def test_flink_kafka_sources_alias_active_avro_fields(repo_root: Path):
     assert "cast(null as string) as device_id" in sql
     assert "bev_mask as bev_mask_json" in sql
     assert "cast(original_mask as string) as original_mask_json" in sql
+    assert "cast(severity_score as double) as severity_score" in sql
     assert "select *" not in sql
     raw_source = sql.split("create temporary table kafka_raw_events", 1)[1].split(") with", 1)[0]
     assert "`timestamp` timestamp(6)" in raw_source
@@ -160,6 +161,8 @@ def test_flink_kafka_sources_alias_active_avro_fields(repo_root: Path):
     surface_source = sql.split("create temporary table kafka_surface_area_events", 1)[1].split(") with", 1)[0]
     assert "bev_mask string" in surface_source
     assert "bev_mask_json string" not in surface_source
+    severity_source = sql.split("create temporary table kafka_severity_events", 1)[1].split(") with", 1)[0]
+    assert "severity_score int" in severity_source
     assert (
         "insert into bronze.raw_detection_events ( event_id, vehicle_id, device_id, event_time, gps_lat, "
         "gps_lon, gps_accuracy_m, raw_image_object_key, original_mask_json, detection_confidence, "
