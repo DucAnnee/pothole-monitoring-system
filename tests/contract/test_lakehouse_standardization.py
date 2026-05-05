@@ -195,3 +195,39 @@ def test_compose_declares_streamhouse_and_serving_services(repo_root: Path):
     assert "flink:1.19" in compose
     assert "./lakehouse/postgis/001_serving_schema.sql" in compose
     assert "./lakehouse/flink/sql:/opt/pothole-lakehouse/sql:ro" in compose
+
+
+def test_lakehouse_bootstrap_script_submits_standard_jobs(repo_root: Path):
+    script = read(repo_root / "scripts" / "start-lakehouse-jobs.ps1").lower()
+
+    for service in [
+        "flink-jobmanager",
+        "flink-taskmanager",
+        "trino",
+        "postgis-serving",
+        "polaris",
+        "minio",
+    ]:
+        assert service in script
+
+    for ddl_file in [
+        "001_medallion_namespaces.sql",
+        "010_bronze_tables.sql",
+        "020_silver_tables.sql",
+        "030_gold_tables.sql",
+        "040_ml_tables.sql",
+    ]:
+        assert ddl_file in script
+
+    previous_index = -1
+    for flink_job in [
+        "010_kafka_to_bronze.sql",
+        "020_silver_materialization.sql",
+        "030_gold_materialization.sql",
+        "040_gold_to_postgis_projection.sql",
+    ]:
+        current_index = script.index(flink_job)
+        assert current_index > previous_index
+        previous_index = current_index
+
+    assert "docker exec -d flink-jobmanager" in script
