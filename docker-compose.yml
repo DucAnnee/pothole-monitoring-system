@@ -331,7 +331,6 @@ services:
       - ./container-conf/flink/lib/iceberg-aws-bundle-1.10.1.jar:/opt/flink/lib/iceberg-aws-bundle-1.10.1.jar:ro
       - ./container-conf/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:/opt/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:ro
       - ./container-conf/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:/opt/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:ro
-      - ./container-conf/flink/lib/flink-avro-1.19.3.jar:/opt/flink/lib/flink-avro-1.19.3.jar:ro
       - ./container-conf/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:/opt/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:ro
       - ./container-conf/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:/opt/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:ro
       - ./container-conf/flink/lib/postgresql-42.7.11.jar:/opt/flink/lib/postgresql-42.7.11.jar:ro
@@ -363,7 +362,6 @@ services:
       - ./container-conf/flink/lib/iceberg-aws-bundle-1.10.1.jar:/opt/flink/lib/iceberg-aws-bundle-1.10.1.jar:ro
       - ./container-conf/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:/opt/flink/lib/iceberg-flink-runtime-1.19-1.10.1.jar:ro
       - ./container-conf/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:/opt/flink/lib/flink-connector-jdbc-3.3.0-1.19.jar:ro
-      - ./container-conf/flink/lib/flink-avro-1.19.3.jar:/opt/flink/lib/flink-avro-1.19.3.jar:ro
       - ./container-conf/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:/opt/flink/lib/flink-sql-avro-confluent-registry-1.19.3.jar:ro
       - ./container-conf/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:/opt/flink/lib/flink-sql-connector-kafka-3.3.0-1.19.jar:ro
       - ./container-conf/flink/lib/postgresql-42.7.11.jar:/opt/flink/lib/postgresql-42.7.11.jar:ro
