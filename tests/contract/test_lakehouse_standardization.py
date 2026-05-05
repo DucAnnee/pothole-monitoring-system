@@ -157,7 +157,19 @@ def test_flink_kafka_sources_alias_active_avro_fields(repo_root: Path):
     assert "original_mask_json string" not in raw_source
     assert "device_id string" not in raw_source
     assert "event_time timestamp" not in raw_source
-    assert "bev_mask_json string" not in sql.split("create temporary table kafka_surface_area_events", 1)[1].split(") with", 1)[0]
+    surface_source = sql.split("create temporary table kafka_surface_area_events", 1)[1].split(") with", 1)[0]
+    assert "bev_mask string" in surface_source
+    assert "bev_mask_json string" not in surface_source
+    assert (
+        "insert into bronze.raw_detection_events ( event_id, vehicle_id, device_id, event_time, gps_lat, "
+        "gps_lon, gps_accuracy_m, raw_image_object_key, original_mask_json, detection_confidence, "
+        "kafka_topic, kafka_partition, kafka_offset, ingested_at, payload_json ) select"
+    ) in compact_sql
+    assert (
+        "insert into bronze.surface_area_events ( event_id, raw_image_object_key, bev_object_key, "
+        "bev_mask_json, surface_area_cm2, confidence, processed_at, kafka_topic, kafka_partition, "
+        "kafka_offset, ingested_at, payload_json ) select"
+    ) in compact_sql
     assert (
         "insert into bronze.depth_estimation_events ( event_id, depth_cm, confidence, surface_area_cm2, "
         "processed_at, kafka_topic, kafka_partition, kafka_offset, ingested_at, payload_json ) select"
