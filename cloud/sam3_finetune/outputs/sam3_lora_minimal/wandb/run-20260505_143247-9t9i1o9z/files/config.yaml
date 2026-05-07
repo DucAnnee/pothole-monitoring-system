@@ -1,0 +1,134 @@
+_wandb:
+    value:
+        cli_version: 0.25.0
+        e:
+            zivb6f0i1wy2x7j6sy06jc60ywa6spbv:
+                args:
+                    - --config
+                    - ./configs/minimal_lora_config.yaml
+                codePath: train_sam3_lora_native.py
+                codePathLocal: train_sam3_lora_native.py
+                cpu_count: 10
+                cpu_count_logical: 16
+                cudaVersion: "13.2"
+                disk:
+                    /:
+                        total: "68309917696"
+                        used: "20252389376"
+                email: trandanghienlong2004@gmail.com
+                executable: /home/longshiba/miniconda3/envs/cv/bin/python
+                git:
+                    commit: e8744cf3aa7441421d1cf9e3f612679d78e3924e
+                    remote: git@github.com:Sompote/SAM3_LoRA.git
+                gpu: NVIDIA GeForce RTX 5060 Ti
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Blackwell
+                      cudaCores: 4608
+                      memoryTotal: "17103323136"
+                      name: NVIDIA GeForce RTX 5060 Ti
+                      uuid: GPU-a07faad0-7872-34b3-a2e5-c3f1332081e5
+                host: Long-PC
+                memory:
+                    total: "67181686784"
+                os: Linux-6.17.0-23-generic-x86_64-with-glibc2.39
+                program: /home/longshiba/Documents/document/selfstudy/segmentation/SAM3_LoRA/train_sam3_lora_native.py
+                python: CPython 3.10.20
+                root: outputs/sam3_lora_minimal
+                startedAt: "2026-05-05T07:32:47.364791Z"
+                writerId: zivb6f0i1wy2x7j6sy06jc60ywa6spbv
+        m: []
+        python_version: 3.10.20
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 53
+                - 63
+                - 71
+            "2":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 53
+                - 63
+                - 71
+            "3":
+                - 2
+                - 13
+                - 16
+                - 61
+            "4": 3.10.20
+            "5": 0.25.0
+            "6": 5.7.0
+            "12": 0.25.0
+            "13": linux-x86_64
+evaluation:
+    value:
+        compute_metrics_during_training: true
+        metric: iou
+        save_predictions: false
+hardware:
+    value:
+        dataloader_pin_memory: true
+        device: cuda
+        use_compile: false
+logging:
+    value:
+        log_freq: 10
+        use_wandb: true
+        wandb_project: pothole-seg
+        wandb_run_name: sam3-lora_minimal-20-672
+lora:
+    value:
+        alpha: 8
+        apply_to_detr_decoder: true
+        apply_to_detr_encoder: false
+        apply_to_geometry_encoder: false
+        apply_to_mask_decoder: false
+        apply_to_text_encoder: false
+        apply_to_vision_encoder: false
+        dropout: 0
+        rank: 4
+        target_modules:
+            - q_proj
+            - k_proj
+            - v_proj
+model:
+    value:
+        cache_dir: null
+        name: facebook/sam3
+output:
+    value:
+        hub_model_id: null
+        logging_dir: logs
+        output_dir: outputs/sam3_lora_minimal
+        push_to_hub: false
+        save_lora_only: true
+training:
+    value:
+        adam_beta1: 0.9
+        adam_beta2: 0.999
+        adam_epsilon: "1e-8"
+        batch_size: 8
+        data_dir: /home/longshiba/Documents/document/dataset/RDD_2022_Seg_COCO
+        eval_steps: 250
+        gradient_accumulation_steps: 1
+        learning_rate: "2e-4"
+        logging_steps: 10
+        lr_scheduler: cosine
+        max_grad_norm: 1
+        mixed_precision: fp16
+        num_epochs: 20
+        num_workers: 2
+        resolution: 672
+        save_steps: 500
+        save_total_limit: 2
+        seed: 42
+        warmup_steps: 100
+        weight_decay: 0.01

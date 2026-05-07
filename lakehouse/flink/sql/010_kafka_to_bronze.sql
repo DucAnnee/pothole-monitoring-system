@@ -19,13 +19,12 @@ USE CATALOG lakehouse;
 CREATE TEMPORARY TABLE kafka_raw_events (
   event_id STRING,
   vehicle_id STRING,
-  device_id STRING,
-  event_time TIMESTAMP(6),
+  `timestamp` TIMESTAMP(6),
   gps_lat DOUBLE,
   gps_lon DOUBLE,
-  gps_accuracy_m DOUBLE,
+  gps_accuracy DOUBLE,
   raw_image_object_key STRING,
-  original_mask_json STRING,
+  original_mask ARRAY<ARRAY<DOUBLE>>,
   detection_confidence DOUBLE,
   kafka_topic STRING METADATA FROM 'topic' VIRTUAL,
   kafka_partition INT METADATA FROM 'partition' VIRTUAL,
@@ -44,7 +43,7 @@ CREATE TEMPORARY TABLE kafka_surface_area_events (
   event_id STRING,
   raw_image_object_key STRING,
   bev_object_key STRING,
-  bev_mask_json STRING,
+  bev_mask STRING,
   surface_area_cm2 DOUBLE,
   confidence DOUBLE,
   processed_at TIMESTAMP(6),
@@ -84,7 +83,7 @@ CREATE TEMPORARY TABLE kafka_severity_events (
   event_id STRING,
   depth_cm DOUBLE,
   surface_area_cm2 DOUBLE,
-  severity_score DOUBLE,
+  severity_score INT,
   severity_level STRING,
   calculated_at TIMESTAMP(6),
   kafka_topic STRING METADATA FROM 'topic' VIRTUAL,
@@ -100,14 +99,118 @@ CREATE TEMPORARY TABLE kafka_severity_events (
   'avro-confluent.schema-registry.url' = 'http://schema-registry:8081'
 );
 
-INSERT INTO bronze.raw_detection_events
-SELECT *, CURRENT_TIMESTAMP, CAST(NULL AS STRING) FROM kafka_raw_events;
+INSERT INTO bronze.raw_detection_events (
+  event_id,
+  vehicle_id,
+  device_id,
+  event_time,
+  gps_lat,
+  gps_lon,
+  gps_accuracy_m,
+  raw_image_object_key,
+  original_mask_json,
+  detection_confidence,
+  kafka_topic,
+  kafka_partition,
+  kafka_offset,
+  ingested_at,
+  payload_json
+)
+SELECT
+  event_id,
+  vehicle_id,
+  CAST(NULL AS STRING) AS device_id,
+  `timestamp` AS event_time,
+  gps_lat,
+  gps_lon,
+  gps_accuracy AS gps_accuracy_m,
+  raw_image_object_key,
+  CAST(original_mask AS STRING) AS original_mask_json,
+  detection_confidence,
+  kafka_topic,
+  kafka_partition,
+  kafka_offset,
+  CURRENT_TIMESTAMP AS ingested_at,
+  CAST(NULL AS STRING) AS payload_json
+FROM kafka_raw_events;
 
-INSERT INTO bronze.surface_area_events
-SELECT *, CURRENT_TIMESTAMP, CAST(NULL AS STRING) FROM kafka_surface_area_events;
+INSERT INTO bronze.surface_area_events (
+  event_id,
+  raw_image_object_key,
+  bev_object_key,
+  bev_mask_json,
+  surface_area_cm2,
+  confidence,
+  processed_at,
+  kafka_topic,
+  kafka_partition,
+  kafka_offset,
+  ingested_at,
+  payload_json
+)
+SELECT
+  event_id,
+  raw_image_object_key,
+  bev_object_key,
+  bev_mask AS bev_mask_json,
+  surface_area_cm2,
+  confidence,
+  processed_at,
+  kafka_topic,
+  kafka_partition,
+  kafka_offset,
+  CURRENT_TIMESTAMP AS ingested_at,
+  CAST(NULL AS STRING) AS payload_json
+FROM kafka_surface_area_events;
 
-INSERT INTO bronze.depth_estimation_events
-SELECT *, CURRENT_TIMESTAMP, CAST(NULL AS STRING) FROM kafka_depth_events;
+INSERT INTO bronze.depth_estimation_events (
+  event_id,
+  depth_cm,
+  confidence,
+  surface_area_cm2,
+  processed_at,
+  kafka_topic,
+  kafka_partition,
+  kafka_offset,
+  ingested_at,
+  payload_json
+)
+SELECT
+  event_id,
+  depth_cm,
+  confidence,
+  surface_area_cm2,
+  processed_at,
+  kafka_topic,
+  kafka_partition,
+  kafka_offset,
+  CURRENT_TIMESTAMP AS ingested_at,
+  CAST(NULL AS STRING) AS payload_json
+FROM kafka_depth_events;
 
-INSERT INTO bronze.severity_score_events
-SELECT *, CURRENT_TIMESTAMP, CAST(NULL AS STRING) FROM kafka_severity_events;
+INSERT INTO bronze.severity_score_events (
+  event_id,
+  depth_cm,
+  surface_area_cm2,
+  severity_score,
+  severity_level,
+  calculated_at,
+  kafka_topic,
+  kafka_partition,
+  kafka_offset,
+  ingested_at,
+  payload_json
+)
+SELECT
+  event_id,
+  depth_cm,
+  surface_area_cm2,
+  CAST(severity_score AS DOUBLE) AS severity_score,
+  severity_level,
+  calculated_at,
+  kafka_topic,
+  kafka_partition,
+  kafka_offset,
+  CURRENT_TIMESTAMP AS ingested_at,
+  CAST(NULL AS STRING) AS payload_json
+FROM kafka_severity_events;

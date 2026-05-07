@@ -41,6 +41,8 @@ def load_module_from_path(module_name: str, path: Path, import_path: Path | None
         "config",
         "pothole_area_estimator",
         "latency_tracker",
+        "device_state",
+        "gps_provider",
     ]
     saved_modules = {
         name: sys.modules.pop(name)
