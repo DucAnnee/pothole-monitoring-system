@@ -16,6 +16,7 @@ export default [
     route("settings", "routes/_app.settings.tsx"),
   ]),
   route("api/map-data", "routes/api.map-data.tsx"),
+  route("api/annotation/assist", "routes/api.annotation.assist.tsx"),
   route("api/image/proxy", "routes/api.image.proxy.tsx"),
   route("api/pothole/:id", "routes/api.pothole.$id.tsx"),
   route("api/v1/collections", "routes/api.v1.collections.tsx"),
