@@ -135,6 +135,7 @@ dashboard-ui-reference/
 AGENTS.md
 .codex/
 .worktrees/
+.superpowers/
 
 graphify-out/
 .graphify*
