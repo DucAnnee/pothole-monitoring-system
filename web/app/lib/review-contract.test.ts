@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  buildReviewTaskStatusSql,
   buildReviewQueueSql,
   deriveReviewTaskId,
   mapReviewQueueRow,
@@ -29,6 +30,15 @@ describe("buildReviewQueueSql", () => {
     expect(query.sql).toContain("serving.review_tasks");
     expect(query.sql).toContain("COALESCE(rt.status, 'pending')");
     expect(query.params).toEqual([0.6]);
+  });
+});
+
+describe("buildReviewTaskStatusSql", () => {
+  test("upserts review task status for synthetic task ids", () => {
+    const query = buildReviewTaskStatusSql("review-defect-1", "defect-1", "completed");
+    expect(query.sql).toContain("INSERT INTO serving.review_tasks");
+    expect(query.sql).toContain("ON CONFLICT (review_task_id) DO UPDATE");
+    expect(query.params).toEqual(["review-defect-1", "defect-1", "completed"]);
   });
 });
 

@@ -98,6 +98,28 @@ export function buildReviewQueueSql(
   };
 }
 
+export function buildReviewTaskStatusSql(
+  reviewTaskId: string,
+  defectId: string,
+  status: ReviewTaskStatus,
+): { sql: string; params: unknown[] } {
+  return {
+    sql: `
+      INSERT INTO serving.review_tasks (
+        review_task_id,
+        defect_id,
+        status,
+        updated_at
+      )
+      VALUES ($1, $2, $3, now())
+      ON CONFLICT (review_task_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        updated_at = now()
+    `,
+    params: [reviewTaskId, defectId, status],
+  };
+}
+
 export function mapReviewQueueRow(row: ReviewQueueRow): ReviewQueueItem {
   const confidencePercent = Math.round((row.confidence ?? 0) * 100);
   return {

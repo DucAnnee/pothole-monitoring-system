@@ -3,6 +3,7 @@ import pg from "pg";
 import type { AnnotationLabel } from "~/lib/annotation-contract";
 import {
   buildReviewQueueSql,
+  buildReviewTaskStatusSql,
   mapReviewQueueRow,
   readLowConfidenceThreshold,
   type ReviewQueueItem,
@@ -471,16 +472,11 @@ export async function insertAnnotation(
 
 export async function updateReviewTaskStatus(
   reviewTaskId: string,
+  defectId: string,
   status: ReviewTaskStatus,
 ): Promise<void> {
-  await queryPostgis(
-    `
-      UPDATE serving.review_tasks
-      SET status = $2, updated_at = now()
-      WHERE review_task_id = $1
-    `,
-    [reviewTaskId, status],
-  );
+  const query = buildReviewTaskStatusSql(reviewTaskId, defectId, status);
+  await queryPostgis(query.sql, query.params);
 }
 
 export async function insertAuditLog(input: AuditLogInput): Promise<void> {
