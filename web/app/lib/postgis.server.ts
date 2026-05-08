@@ -1,4 +1,14 @@
+import { randomUUID } from "node:crypto";
 import pg from "pg";
+import type { AnnotationLabel } from "~/lib/annotation-contract";
+import {
+  buildReviewQueueSql,
+  mapReviewQueueRow,
+  readLowConfidenceThreshold,
+  type ReviewQueueItem,
+  type ReviewQueueRow,
+  type ReviewTaskStatus,
+} from "~/lib/review-contract";
 import type { PotholeDetail } from "~/lib/trino.server";
 
 const { Pool } = pg;
@@ -31,6 +41,27 @@ export interface SummaryData {
   };
   recentCritical: PotholeMarker[];
   topDistricts: Array<{ district: string; count: number }>;
+}
+
+export interface ReviewTaskDetail extends ReviewQueueItem {
+  imageProxyUrl: string | null;
+  originalPolygon: Array<[number, number]>;
+  latestAnnotation: AnnotationLabel | null;
+}
+
+export interface InsertAnnotationInput {
+  defectId: string;
+  evidenceId: string | null;
+  label: AnnotationLabel;
+  annotatorId: string | null;
+}
+
+export interface AuditLogInput {
+  actorId: string | null;
+  action: string;
+  entityType: string;
+  entityId: string;
+  payload: Record<string, unknown>;
 }
 
 export function emptySummaryData(): SummaryData {
@@ -374,4 +405,102 @@ export async function querySummary(): Promise<SummaryData> {
     recentCritical: recentCritical.filter((p) => p.severity_level === "CRITICAL").slice(0, 5),
     topDistricts: topDistrictRows.map((r) => ({ district: r.district ?? "Unknown", count: Number(r.count) })),
   };
+}
+
+export async function queryReviewQueue(
+  threshold = readLowConfidenceThreshold(process.env.LOW_CONFIDENCE_THRESHOLD),
+): Promise<ReviewQueueItem[]> {
+  const query = buildReviewQueueSql(threshold);
+  const rows = await queryPostgis<ReviewQueueRow>(query.sql, query.params);
+  return rows.map(mapReviewQueueRow);
+}
+
+export async function queryReviewTaskDetail(
+  reviewTaskId: string,
+): Promise<ReviewTaskDetail | null> {
+  const rows = await queryReviewQueue();
+  const item = rows.find((row) => row.reviewTaskId === reviewTaskId);
+  if (!item) return null;
+
+  const annotationRows = await queryPostgis<{ label_json: AnnotationLabel }>(
+    `
+      SELECT label_json
+      FROM serving.annotations
+      WHERE defect_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1
+    `,
+    [item.defectId],
+  );
+
+  return {
+    ...item,
+    imageProxyUrl: item.rawImageObjectKey
+      ? `/api/image/proxy?path=${encodeURIComponent(item.rawImageObjectKey)}`
+      : null,
+    originalPolygon: [[200, 120], [350, 100], [380, 230], [220, 260]],
+    latestAnnotation: annotationRows[0]?.label_json ?? null,
+  };
+}
+
+export async function insertAnnotation(
+  input: InsertAnnotationInput,
+): Promise<string> {
+  const annotationId = randomUUID();
+  await queryPostgis(
+    `
+      INSERT INTO serving.annotations (
+        annotation_id,
+        defect_id,
+        evidence_id,
+        label_json,
+        annotator_id
+      )
+      VALUES ($1, $2, $3, $4::jsonb, $5)
+    `,
+    [
+      annotationId,
+      input.defectId,
+      input.evidenceId,
+      JSON.stringify(input.label),
+      input.annotatorId,
+    ],
+  );
+  return annotationId;
+}
+
+export async function updateReviewTaskStatus(
+  reviewTaskId: string,
+  status: ReviewTaskStatus,
+): Promise<void> {
+  await queryPostgis(
+    `
+      UPDATE serving.review_tasks
+      SET status = $2, updated_at = now()
+      WHERE review_task_id = $1
+    `,
+    [reviewTaskId, status],
+  );
+}
+
+export async function insertAuditLog(input: AuditLogInput): Promise<void> {
+  await queryPostgis(
+    `
+      INSERT INTO serving.audit_log (
+        actor_id,
+        action,
+        entity_type,
+        entity_id,
+        payload
+      )
+      VALUES ($1, $2, $3, $4, $5::jsonb)
+    `,
+    [
+      input.actorId,
+      input.action,
+      input.entityType,
+      input.entityId,
+      JSON.stringify(input.payload),
+    ],
+  );
 }
