@@ -143,3 +143,6 @@ graphify-out/
 *.zip
 
 *.jar
+
+logs/
+report-plan/
