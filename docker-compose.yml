@@ -613,6 +613,131 @@ services:
     networks:
       - kafka-net
 
+  # ==========================================================
+  #  CLOUD ML MICROSERVICES
+  # ==========================================================
+  etl-service:
+    build:
+      context: ./cloud
+      dockerfile: Dockerfile
+    container_name: etl-service
+    command: python etl_service/etl_microservice.py
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_started
+      minio:
+        condition: service_healthy
+      trino:
+        condition: service_started
+      polaris:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9094,kafka-2:9094,kafka-3:9094
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      MINIO_ENDPOINT: minio:9000
+      POLARIS_URL: http://polaris:8181/api/catalog/
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+    networks:
+      - kafka-net
+    restart: unless-stopped
+
+  bev-surface-service:
+    build:
+      context: ./cloud
+      dockerfile: Dockerfile
+    container_name: bev-surface-service
+    command: python bev_surface_service/bev_surface_service.py
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9094,kafka-2:9094,kafka-3:9094
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    networks:
+      - kafka-net
+    restart: unless-stopped
+
+  depth-estimation-service:
+    build:
+      context: ./cloud
+      dockerfile: Dockerfile
+    container_name: depth-estimation-service
+    command: python depth_estimation_model/cloud_pipeline.py
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_started
+      minio:
+        condition: service_healthy
+      triton-inference-server:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9094,kafka-2:9094,kafka-3:9094
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      MINIO_ENDPOINT: minio:9000
+      TRITON_HOST: triton-inference-server
+      TRITON_GRPC_PORT: 8001
+    networks:
+      - kafka-net
+    restart: unless-stopped
+
+  severity-calculation-service:
+    build:
+      context: ./cloud
+      dockerfile: Dockerfile
+    container_name: severity-calculation-service
+    command: python severity_calculation_service/severity_aggregator.py
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9094,kafka-2:9094,kafka-3:9094
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    networks:
+      - kafka-net
+    restart: unless-stopped
+
+  final-enrichment-service:
+    build:
+      context: ./cloud
+      dockerfile: Dockerfile
+    container_name: final-enrichment-service
+    command: python final_enrichment_service/final_enrichment_service.py
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_started
+      minio:
+        condition: service_healthy
+      trino:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9094,kafka-2:9094,kafka-3:9094
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    networks:
+      - kafka-net
+    restart: unless-stopped
+
 networks:
   kafka-net:
     name: kafka-net
