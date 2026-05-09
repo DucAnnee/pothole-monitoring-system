@@ -7,14 +7,14 @@ kafka:
   source_topic: "pothole.surface.area.v2"
   output_topic: "pothole.depth.v1"
   consumer_group_id: "depth-estimator-cloud-group"
-  bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
-  schema_registry_url: "http://localhost:8082"
+  bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}"
+  schema_registry_url: "${SCHEMA_REGISTRY_URL:http://localhost:8082}"
   max_retries: 5
   retry_delay: 2
 
 # MinIO configuration
 minio:
-  endpoint: "localhost:9000"
+  endpoint: "${MINIO_ENDPOINT:localhost:9000}"
   access_key: "${MINIO_ACCESS_KEY:minioadmin}"
   secret_key: "${MINIO_SECRET_KEY:minioadmin}"
   bucket: "warehouse"
@@ -22,9 +22,9 @@ minio:
   max_retries: 5
   retry_delay: 2
 
-# Triton Inference Server connection
+# Triton Inference Server connection (gRPC)
 triton:
-  host: "${TRITON_HOST:triton-inference-server}"
+  host: "${TRITON_HOST:localhost}"
   grpc_port: "${TRITON_GRPC_PORT:8001}"
   model_name: "depth_anything_v2"
   model_version: "1"

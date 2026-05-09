@@ -6,8 +6,8 @@
 
 # Kafka configuration
 kafka:
-  bootstrap_servers: "localhost:19092,localhost:29092,localhost:39092"
-  schema_registry_url: "http://localhost:8082"
+  bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:localhost:19092,localhost:29092,localhost:39092}"
+  schema_registry_url: "${SCHEMA_REGISTRY_URL:http://localhost:8082}"
   consumer_group_id: "pothole-iceberg-etl"
   
   # Dead Letter Queue suffix
@@ -15,7 +15,7 @@ kafka:
 
 # Polaris/Iceberg configuration
 polaris:
-  url: "http://localhost:8181/api/catalog/"
+  url: "${POLARIS_URL:http://localhost:8181/api/catalog/}"
   credentials: "${POLARIS_CREDENTIALS:root:s3cr3t}"
   warehouse: "warehouse"
   catalog_name: "iceberg"
@@ -23,8 +23,8 @@ polaris:
 
 # Trino configuration
 trino:
-  host: "localhost"
-  port: 8081
+  host: "${TRINO_HOST:localhost}"
+  port: "${TRINO_PORT:8081}"
   user: "trino"
   catalog: "iceberg"
 
