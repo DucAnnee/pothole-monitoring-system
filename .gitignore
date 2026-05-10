@@ -146,3 +146,8 @@ graphify-out/
 
 logs/
 report-plan/
+
+
+# sam3
+cloud/sam3_finetune/outputs/*/wandb
+!cloud/sam3_finetune/outputs/*/*.pt
