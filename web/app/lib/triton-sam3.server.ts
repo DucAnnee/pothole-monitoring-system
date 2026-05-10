@@ -57,7 +57,7 @@ export async function callSam3Assist(
     name: "image_object_key",
     shape: [1],
     datatype: "BYTES",
-    data: [toBase64(imageObjectKey)],
+    data: [imageObjectKey],
   };
 
   const bboxInput: TritonFp32Input = {
@@ -93,8 +93,13 @@ export async function callSam3Assist(
   try {
     const encoded = raw.outputs[0]?.data[0];
     if (!encoded) throw new Error("empty polygon_json output");
-    const decoded = fromBase64(encoded);
-    const parsed = JSON.parse(decoded) as { polygon?: unknown[]; confidence?: number; error?: string };
+    // Triton may return STRING output as base64 or as a raw JSON string depending on config
+    let parsed: { polygon?: unknown[]; confidence?: number; error?: string };
+    try {
+      parsed = JSON.parse(encoded);
+    } catch {
+      parsed = JSON.parse(fromBase64(encoded));
+    }
 
     if (parsed.error || !Array.isArray(parsed.polygon) || parsed.polygon.length < 3) {
       throw new Error(parsed.error ?? "invalid polygon from SAM3");

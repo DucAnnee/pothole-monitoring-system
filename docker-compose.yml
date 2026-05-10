@@ -594,7 +594,8 @@ services:
       - "8002:8002"   # metrics (Prometheus)
     volumes:
       - ./cloud/triton_inference_server/triton_model_repo:/models
-      - ./cloud/sam3_finetune/outputs/sam3_lora_minimal:/lora_weights:ro
+      - ./cloud/sam3_finetune/outputs/sam3_lora_minimal_augmented:/lora_weights:ro
+      - ./cloud/sam3_finetune/sam3/assets:/opt/sam3/assets:ro
     command: >
       tritonserver
       --model-repository=/models
@@ -606,6 +607,7 @@ services:
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: warehouse
       HUGGING_FACE_TOKEN: ${HUGGING_FACE_TOKEN:-}
+      SAM3_CHECKPOINT_PATH: /opt/sam3/assets/sam3.pt
       SAM3_LORA_WEIGHTS: /lora_weights/best_lora_weights.pt
     deploy:
       resources:
