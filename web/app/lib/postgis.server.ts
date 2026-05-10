@@ -337,7 +337,7 @@ export async function queryPotholeDetail(id: string): Promise<PotholeDetail | nu
 }
 
 export async function querySummary(): Promise<SummaryData> {
-  const [summaryRows, severityRows, topDistrictRows] = await Promise.all([
+  const [summaryRows, severityRows, topDistrictRows, dailyRows] = await Promise.all([
     queryPostgis<{
       active_count: string;
       average_severity: string | null;
@@ -371,6 +371,14 @@ export async function querySummary(): Promise<SummaryData> {
       LIMIT 5
       `
     ),
+    queryPostgis<{ day: string; count: string }>(
+      `
+      SELECT DATE(first_seen_at) AS day, COUNT(*) AS count
+      FROM serving.current_road_defects
+      WHERE first_seen_at >= now() - '30 days'::interval
+      GROUP BY DATE(first_seen_at)
+      `
+    ),
   ]);
 
   const row = summaryRows[0];
@@ -400,7 +408,14 @@ export async function querySummary(): Promise<SummaryData> {
     },
     averageSeverity: Math.round(Number(row?.average_severity ?? 0) * 100) / 100,
     inProgress: Number(row?.in_progress_count ?? 0),
-    activePotholesLast30Days: emptySummaryData().activePotholesLast30Days,
+    activePotholesLast30Days: (() => {
+      const countByDay = new Map(dailyRows.map((r) => [String(r.day).slice(0, 10), Number(r.count)]));
+      return Array.from({ length: 30 }, (_, i) => {
+        const d = new Date(Date.now() - (29 - i) * 86400000);
+        const ds = d.toISOString().slice(0, 10);
+        return { date: ds, count: countByDay.get(ds) ?? 0 };
+      });
+    })(),
     severityDistribution,
     statusChanges: emptySummaryData().statusChanges,
     recentCritical: recentCritical.filter((p) => p.severity_level === "CRITICAL").slice(0, 5),

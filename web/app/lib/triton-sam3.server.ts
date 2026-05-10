@@ -33,10 +33,6 @@ export interface Sam3Result {
   source: "sam3_assist" | "sam3_assist_stub";
 }
 
-function toBase64(s: string): string {
-  return Buffer.from(s, "utf-8").toString("base64");
-}
-
 function fromBase64(s: string): string {
   return Buffer.from(s, "base64").toString("utf-8");
 }

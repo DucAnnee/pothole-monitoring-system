@@ -155,7 +155,7 @@ export default function OverviewPage() {
         <Card>
           <CardContent>
             <Typography variant="subtitle2" mb={1}>Active Potholes — Last 30 Days</Typography>
-            <SparklineChart data={sparkData} width={undefined as unknown as number} height={72} color="#1488DB" />
+            <SparklineChart data={sparkData} height={72} color="#1488DB" />
           </CardContent>
         </Card>
         <Card>
@@ -179,7 +179,7 @@ export default function OverviewPage() {
               {data.recentCritical.map((p) => (
                 <Box
                   key={p.pothole_id}
-                  onClick={() => navigate("/map")}
+                  onClick={() => navigate(`/map?selected=${encodeURIComponent(p.pothole_id)}`)}
                   sx={{
                     display: "flex",
                     justifyContent: "space-between",

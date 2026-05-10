@@ -9,8 +9,8 @@ import IconButton from "@mui/material/IconButton";
 import LinearProgress from "@mui/material/LinearProgress";
 import Typography from "@mui/material/Typography";
 import { CheckCircle, Clock, MapPin, X } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
-import { useLoaderData, useNavigate } from "react-router";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useLoaderData, useNavigate, useSearchParams } from "react-router";
 import type { Route } from "./+types/_app.map";
 import { ClientOnly } from "~/components/ClientOnly";
 
@@ -230,11 +230,23 @@ function DetailPanel({
 
 export default function MapPage() {
   const { markers } = useLoaderData<typeof loader>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selected, setSelected] = useState<PotholeMarker | null>(null);
   const [detail, setDetail] = useState<PotholeDetail | null>(null);
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
+  const autoSelectedRef = useRef(false);
+
+  useEffect(() => {
+    const preselect = searchParams.get("selected");
+    if (!preselect || autoSelectedRef.current || !markers.length) return;
+    const marker = markers.find((m) => m.pothole_id === preselect);
+    if (!marker) return;
+    autoSelectedRef.current = true;
+    setSearchParams((prev) => { prev.delete("selected"); return prev; }, { replace: true });
+    void handleSelect(marker);
+  }, [markers, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const counts = FILTER_KEYS.reduce<Record<string, number>>((acc, k) => {
     acc[k] = markers.filter((m) => normalizeSeverity(m.severity_level) === k).length;

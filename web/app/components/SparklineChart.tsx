@@ -5,21 +5,24 @@ interface Props {
   color?: string;
 }
 
+const VB_W = 400;
+
 export function SparklineChart({
   data,
-  width = 200,
+  width,
   height = 48,
   color = "#1488DB",
 }: Props) {
   if (!data.length) return null;
 
+  const w = VB_W;
   const max = Math.max(...data, 1);
   const min = Math.min(...data);
   const range = max - min || 1;
   const pad = 4;
 
   const toX = (i: number) =>
-    pad + (i / (data.length - 1)) * (width - pad * 2);
+    pad + (i / (data.length - 1)) * (w - pad * 2);
   const toY = (v: number) =>
     pad + ((max - v) / range) * (height - pad * 2);
 
@@ -30,7 +33,13 @@ export function SparklineChart({
   const lastY = toY(data[data.length - 1]);
 
   return (
-    <svg width={width} height={height} style={{ display: "block" }}>
+    <svg
+      width={width ?? "100%"}
+      height={height}
+      viewBox={`0 0 ${w} ${height}`}
+      preserveAspectRatio="none"
+      style={{ display: "block" }}
+    >
       <defs>
         <linearGradient id="spark-fill" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={color} stopOpacity={0.3} />
