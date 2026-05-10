@@ -881,7 +881,7 @@ def validate(
     config_path,
     weights_path,
     val_data_dir,
-    sam_checkpoint: str = "./asset/sam3.pt",
+    sam_checkpoint: str = "./asset/sam.pt",
     num_samples=None,
     prob_threshold=0.3,
     nms_iou=0.7,
@@ -925,7 +925,7 @@ def validate(
         compile=False,
         load_from_HF=True,
         bpe_path="sam3/assets/bpe_simple_vocab_16e6.txt.gz",
-        checkpoint_path=sam_checkpoint,
+        checkpoint_path=str(Path(sam_checkpoint).expanduser()) if sam_checkpoint else sam_checkpoint,
         eval_mode=False,
     )
 
@@ -1346,8 +1346,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sam-checkpoint",
         type=str,
-        default="./asset/sam3.pt",
-        help="Path to SAM checkpoint to initialize backbone (default: ./asset/sam3.pt)",
+        default="./asset/sam.pt",
+        help="Path to the original SAM checkpoint to initialize the backbone (default: ./asset/sam.pt)",
     )
     args = parser.parse_args()
 

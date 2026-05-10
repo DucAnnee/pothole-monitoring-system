@@ -285,7 +285,7 @@ class SAM3LoRAInference:
         self,
         config_path: str,
         weights_path: Optional[str] = None,
-        sam_checkpoint: Optional[str] = "./asset/sam3.pt",
+        sam_checkpoint: Optional[str] = "./asset/sam.pt",
         resolution: int = 1008,
         detection_threshold: float = 0.5,
         nms_iou_threshold: float = 0.5,
@@ -322,7 +322,9 @@ class SAM3LoRAInference:
         self.detection_threshold = detection_threshold
         self.nms_iou_threshold = nms_iou_threshold
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
-        self.sam_checkpoint = sam_checkpoint
+        self.sam_checkpoint = str(Path(sam_checkpoint).expanduser()) if sam_checkpoint else sam_checkpoint
+        if self.sam_checkpoint and not os.path.exists(self.sam_checkpoint):
+            raise FileNotFoundError(f"SAM checkpoint not found: {self.sam_checkpoint}")
 
         print(f"🔧 Initializing SAM3 + LoRA...")
         print(f"   Device: {self.device}")
@@ -790,8 +792,8 @@ def main():
     parser.add_argument(
         "--sam-checkpoint",
         type=str,
-        default="./asset/sam3.pt",
-        help="Path to SAM checkpoint to initialize backbone (default: ./asset/sam3.pt)",
+        default="./asset/sam.pt",
+        help="Path to the original SAM checkpoint to initialize the backbone (default: ./asset/sam.pt)",
     )
 
     args = parser.parse_args()

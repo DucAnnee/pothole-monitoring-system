@@ -895,10 +895,12 @@ def create_coco_gt_from_dataset_original_res(dataset, image_ids=None, debug=Fals
 
 
 class SAM3TrainerNative:
-    def __init__(self, config_path, multi_gpu=False, sam_checkpoint: str = "./asset/sam3.pt"):
+    def __init__(self, config_path, multi_gpu=False, sam_checkpoint: str = "./asset/sam.pt"):
         with open(config_path, "r") as f:
             self.config = yaml.safe_load(f)
-        self.sam_checkpoint = sam_checkpoint
+        self.sam_checkpoint = str(Path(sam_checkpoint).expanduser()) if sam_checkpoint else sam_checkpoint
+        if self.sam_checkpoint and not os.path.exists(self.sam_checkpoint):
+            raise FileNotFoundError(f"SAM checkpoint not found: {self.sam_checkpoint}")
 
         self.logging_cfg = self.config.get("logging", {})
         self.log_freq = int(
@@ -1491,8 +1493,8 @@ Examples:
     parser.add_argument(
         "--sam-checkpoint",
         type=str,
-        default="./asset/sam3.pt",
-        help="Path to SAM checkpoint to initialize backbone (default: ./asset/sam3.pt)",
+        default="./asset/sam.pt",
+        help="Path to the original SAM checkpoint to initialize the backbone (default: ./asset/sam.pt)",
     )
     parser.add_argument(
         "--device",
