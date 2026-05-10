@@ -584,7 +584,9 @@ services:
   #  TRITON INFERENCE SERVER (GPU model serving)
   # ==========================================================
   triton-inference-server:
-    image: nvcr.io/nvidia/tritonserver:24.12-py3
+    build:
+      context: ./cloud
+      dockerfile: triton_inference_server/Dockerfile.triton
     container_name: triton-inference-server
     ports:
       - "8000:8000"   # HTTP inference
@@ -592,11 +594,19 @@ services:
       - "8002:8002"   # metrics (Prometheus)
     volumes:
       - ./cloud/triton_inference_server/triton_model_repo:/models
+      - ./cloud/sam3_finetune/outputs/sam3_lora_minimal:/lora_weights:ro
     command: >
       tritonserver
       --model-repository=/models
       --log-verbose=0
       --exit-on-error=false
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: warehouse
+      HUGGING_FACE_TOKEN: ${HUGGING_FACE_TOKEN:-}
+      SAM3_LORA_WEIGHTS: /lora_weights/best_lora_weights.pt
     deploy:
       resources:
         reservations:
@@ -609,7 +619,10 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 60s
+    depends_on:
+      minio:
+        condition: service_healthy
     networks:
       - kafka-net
 

@@ -1,0 +1,12 @@
+FROM nvcr.io/nvidia/tritonserver:24.12-py3
+
+# Install SAM3 dependencies from requirements file (covers all transitive deps)
+COPY sam3_finetune/requirements.txt /tmp/sam3_requirements.txt
+RUN pip install --no-cache-dir -r /tmp/sam3_requirements.txt && \
+    pip install --no-cache-dir "minio>=7.2" "opencv-python-headless>=4.8"
+
+# Copy SAM3 local package and LoRA implementation into image
+COPY sam3_finetune/sam3 /opt/sam3
+COPY sam3_finetune/lora_layers.py /opt/lora_layers.py
+
+ENV PYTHONPATH=/opt:$PYTHONPATH

@@ -135,7 +135,7 @@ export function mapReviewQueueRow(row: ReviewQueueRow): ReviewQueueItem {
     assignedTo: row.assigned_to,
     rawImageObjectKey: row.latest_raw_image_object_key,
     bevImageObjectKey: row.latest_bev_object_key,
-    lastSeenAt: row.last_seen_at,
+    lastSeenAt: row.last_seen_at != null ? String(row.last_seen_at) : null,
     location:
       row.ward && row.district
         ? `${row.ward}, ${row.district}`

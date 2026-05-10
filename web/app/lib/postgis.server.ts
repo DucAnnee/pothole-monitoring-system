@@ -439,7 +439,7 @@ export async function queryReviewTaskDetail(
     imageProxyUrl: item.rawImageObjectKey
       ? `/api/image/proxy?path=${encodeURIComponent(item.rawImageObjectKey)}`
       : null,
-    originalPolygon: [[200, 120], [350, 100], [380, 230], [220, 260]],
+    originalPolygon: [[150, 110], [450, 110], [450, 290], [150, 290]],
     latestAnnotation: annotationRows[0]?.label_json ?? null,
   };
 }

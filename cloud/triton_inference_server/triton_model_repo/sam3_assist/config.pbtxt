@@ -1,0 +1,32 @@
+name: "sam3_assist"
+backend: "python"
+max_batch_size: 0
+
+input [
+  {
+    name: "image_object_key"
+    data_type: TYPE_STRING
+    dims: [ 1 ]
+  },
+  {
+    name: "bbox"
+    data_type: TYPE_FP32
+    dims: [ 4 ]
+  }
+]
+
+output [
+  {
+    name: "polygon_json"
+    data_type: TYPE_STRING
+    dims: [ 1 ]
+  }
+]
+
+instance_group [
+  {
+    kind: KIND_GPU
+    count: 1
+    gpus: [ 0 ]
+  }
+]

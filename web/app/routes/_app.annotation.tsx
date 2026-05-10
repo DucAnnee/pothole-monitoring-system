@@ -1,4 +1,5 @@
 import type { Route } from "./+types/_app.annotation";
+import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
@@ -36,6 +37,19 @@ import {
 } from "~/lib/postgis.server";
 
 export const handle = { title: "Annotation Editor" };
+
+export function ErrorBoundary() {
+  return (
+    <Box sx={{ p: 4 }}>
+      <Alert severity="warning" sx={{ mb: 2 }}>
+        No review task selected. Open a task from the Low Confidence queue.
+      </Alert>
+      <Button component="a" href="/lowconf" variant="outlined" size="small">
+        Go to Low Confidence Queue
+      </Button>
+    </Box>
+  );
+}
 
 type AnnotationActionData =
   | { ok: false; error: string }

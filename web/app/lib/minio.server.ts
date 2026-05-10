@@ -3,7 +3,7 @@ import { cached } from "./redis.server";
 
 let _client: Client | null = null;
 
-function getClient(): Client {
+export function getClient(): Client {
   if (!_client) {
     _client = new Client({
       endPoint: process.env.MINIO_ENDPOINT ?? "localhost",
