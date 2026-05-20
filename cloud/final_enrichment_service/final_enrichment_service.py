@@ -119,7 +119,7 @@ SEVERITY_SCORE_AVRO_SCHEMA = """
     {"name": "depth_cm", "type": "double"},
     {"name": "surface_area_cm2", "type": "double"},
     {"name": "severity_score", "type": "int"},
-    {"name": "severity_level", "type": {"type": "enum", "name": "SeverityLevel", "symbols": ["MINOR", "MODERATE", "HIGH", "CRITICAL"]}},
+    {"name": "severity_level", "type": "string"},
     {"name": "calculated_at", "type": {"type": "long", "logicalType": "timestamp-millis"}}
   ]
 }

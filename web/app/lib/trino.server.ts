@@ -122,8 +122,8 @@ export interface PotholeDetail {
   district: string;
   street_name: string;
   road_id: string;
-  depth_cm: number;
-  surface_area_cm2: number;
+  depth_cm: number | null;
+  surface_area_cm2: number | null;
   severity_score: number;
   severity_level: string;
   status: string;
@@ -321,8 +321,8 @@ export async function queryPotholeDetail(id: string): Promise<PotholeDetail | nu
     district: p.district as string,
     street_name: p.street_name as string,
     road_id: p.road_id as string,
-    depth_cm: p.depth_cm as number,
-    surface_area_cm2: p.surface_area_cm2 as number,
+    depth_cm: p.depth_cm != null ? (p.depth_cm as number) : null,
+    surface_area_cm2: p.surface_area_cm2 != null ? (p.surface_area_cm2 as number) : null,
     severity_score: p.severity_score as number,
     severity_level: p.severity_level as string,
     status: p.status as string,
@@ -334,4 +334,26 @@ export async function queryPotholeDetail(id: string): Promise<PotholeDetail | nu
     raw_image_path: p.raw_image_path as string | null,
     bev_image_path: p.bev_image_path as string | null,
   };
+}
+
+export async function queryDefectMeasurements(
+  defectId: string
+): Promise<{ depth_cm: number | null; surface_area_cm2: number | null }> {
+  try {
+    const rows = await trinoFetch(`
+      SELECT depth_cm, surface_area_cm2
+      FROM iceberg.silver.observations
+      WHERE defect_id = '${defectId.replace(/'/g, "''")}'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+    if (!rows.length) return { depth_cm: null, surface_area_cm2: null };
+    const r = rows[0];
+    return {
+      depth_cm: r.depth_cm != null ? (r.depth_cm as number) : null,
+      surface_area_cm2: r.surface_area_cm2 != null ? (r.surface_area_cm2 as number) : null,
+    };
+  } catch {
+    return { depth_cm: null, surface_area_cm2: null };
+  }
 }

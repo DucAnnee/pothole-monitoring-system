@@ -109,9 +109,9 @@ function DetailPanel({
             <MapPin size={14} color="#1488DB" />
             <Typography variant="caption" fontWeight={600} color="primary.main">Location</Typography>
           </Box>
-          <Typography variant="body2">{detail?.street_name ?? "Unknown street"}</Typography>
+          <Typography variant="body2">{detail?.street_name || "Unknown street"}</Typography>
           <Typography variant="caption" color="text.secondary">
-            {detail?.ward}, {detail?.district}, {detail?.city}
+            {[detail?.ward, detail?.district, detail?.city].filter(Boolean).join(", ") || "—"}
           </Typography>
           <Typography variant="caption" color="text.disabled" display="block" mt={0.5}>
             {pothole.gps_lat.toFixed(5)}, {pothole.gps_lon.toFixed(5)}

@@ -10,7 +10,9 @@ import {
   type ReviewQueueRow,
   type ReviewTaskStatus,
 } from "~/lib/review-contract";
+import { queryDefectMeasurements } from "~/lib/trino.server";
 import type { PotholeDetail } from "~/lib/trino.server";
+import { cached } from "~/lib/redis.server";
 
 const { Pool } = pg;
 
@@ -307,22 +309,81 @@ export async function queryMapPotholes(
   }));
 }
 
+interface GeoAddress {
+  ward: string;
+  district: string;
+  city: string;
+  street_name: string;
+}
+
+async function reverseGeocode(lat: number, lon: number): Promise<GeoAddress> {
+  const empty: GeoAddress = { ward: "", district: "", city: "", street_name: "" };
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=vi`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 PotholeMonitor/1.0",
+        "Accept": "application/json",
+        "Accept-Language": "vi",
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return empty;
+    const data = (await res.json()) as { address?: Record<string, string> };
+    const a = data.address ?? {};
+    return {
+      ward: a.suburb ?? a.quarter ?? a.neighbourhood ?? a.village ?? "",
+      district: a.city_district ?? a.district ?? a.county ?? "",
+      city: a.city ?? a.town ?? a.municipality ?? "",
+      street_name: a.road ?? a.pedestrian ?? a.footway ?? a.path ?? "",
+    };
+  } catch {
+    return empty;
+  }
+}
+
 export async function queryPotholeDetail(id: string): Promise<PotholeDetail | null> {
-  const row = await queryRoadDefectById(id);
+  const [row, measurements] = await Promise.all([
+    queryRoadDefectById(id),
+    queryDefectMeasurements(id),
+  ]);
   if (!row) return null;
+
+  let ward = row.ward ?? "";
+  let district = row.district ?? "";
+  let city = "";
+  let street_name = "";
+
+  if (!ward && !district) {
+    const geo = await cached<GeoAddress>(
+      `geo:${row.latitude.toFixed(5)}:${row.longitude.toFixed(5)}`,
+      7 * 24 * 3600,
+      () => reverseGeocode(row.latitude, row.longitude)
+    );
+    ward = geo.ward;
+    district = geo.district;
+    city = geo.city;
+    street_name = geo.street_name;
+    if (ward || district) {
+      queryPostgis(
+        `UPDATE serving.current_road_defects SET district = $1, ward = $2 WHERE defect_id = $3`,
+        [district, ward, row.defect_id]
+      ).catch(() => {});
+    }
+  }
 
   return {
     pothole_id: row.defect_id,
     first_event_id: "",
     gps_lat: row.latitude,
     gps_lon: row.longitude,
-    city: "",
-    ward: row.ward ?? "",
-    district: row.district ?? "",
-    street_name: "",
+    city,
+    ward,
+    district,
+    street_name,
     road_id: row.road_segment_id ?? "",
-    depth_cm: 0,
-    surface_area_cm2: 0,
+    depth_cm: measurements.depth_cm,
+    surface_area_cm2: measurements.surface_area_cm2,
     severity_score: row.severity_score ?? 0,
     severity_level: row.severity_level ?? "UNKNOWN",
     status: row.status,
@@ -396,7 +457,7 @@ export async function querySummary(): Promise<SummaryData> {
     }
   }
 
-  const recentCritical = await queryMapPotholes();
+  const recentCritical = await queryMapPotholes().catch(() => [] as PotholeMarker[]);
 
   return {
     activePotholes: {

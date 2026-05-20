@@ -75,7 +75,14 @@ export function PotholeMap({ initialMarkers, onSelect, selected, activeFilters }
       fetch(`/api/map-data?lat=${lat}&lon=${lng}`, { signal: ctrl.signal })
         .then((res) => (res.ok ? res.json() : null))
         .then((json) => {
-          if (json) setMarkers((json as { markers: PotholeMarker[] }).markers);
+          if (json) {
+            const incoming = (json as { markers: PotholeMarker[] }).markers;
+            setMarkers((prev) => {
+              const byId = new Map(prev.map((m) => [m.pothole_id, m]));
+              for (const m of incoming) byId.set(m.pothole_id, m);
+              return [...byId.values()];
+            });
+          }
         })
         .catch(() => {});
     }

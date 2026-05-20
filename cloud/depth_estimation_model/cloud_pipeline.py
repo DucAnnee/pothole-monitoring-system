@@ -144,18 +144,17 @@ def wait_for_triton_ready(
     client: TritonDepthClient,
     retries: int = 20,
     delay_seconds: float = 5.0,
-) -> None:
-    """Block until Triton reports the model as ready, or raise after retries."""
+) -> bool:
+    """Block until Triton reports the model as ready. Returns False if unreachable after retries."""
     print(f"[INFO] Waiting for Triton model '{client.model_name}' to be ready ...")
     for attempt in range(1, retries + 1):
         if client.is_model_ready():
             print(f"[INFO] Triton model {client.model_name} is READY")
-            return
+            return True
         print(f"[INFO] Triton not ready (attempt {attempt}/{retries}), retrying in {delay_seconds}s ...")
         time.sleep(delay_seconds)
-    raise RuntimeError(
-        f"Triton model '{client.model_name}' did not become ready after {retries} attempts"
-    )
+    print(f"[WARN] Triton unavailable after {retries} attempts — running in FALLBACK mode (depth=5.0cm, confidence=0.5)")
+    return False
 
 
 # ============================================================================
@@ -356,26 +355,32 @@ def _process_batch(
     consumer: Consumer,
     serializer: AvroSerializer,
     config: ConfigLoader,
+    triton_available: bool = True,
 ) -> None:
     try:
-        input_size = config.get_model_input_size()
-        tensors = np.stack([
-            preprocessor.preprocess(e.image_bytes, input_size) for e in batch
-        ])  # [N, 3, 518, 518]
-
-        depth_maps = triton_client.infer_batch(tensors)  # [N, 518, 518]
-
         output_topic = config.get_kafka_output_topic()
         processed_at = int(datetime.now(timezone.utc).timestamp() * 1000)
 
-        for pending, depth_map in zip(batch, depth_maps):
-            depth_cm, confidence = postprocess_depth_map(
-                depth_map,
-                config.get_depth_min_cm(),
-                config.get_depth_max_cm(),
-                config.get_confidence_min(),
-                config.get_confidence_max(),
-            )
+        if triton_available:
+            input_size = config.get_model_input_size()
+            tensors = np.stack([
+                preprocessor.preprocess(e.image_bytes, input_size) for e in batch
+            ])  # [N, 3, 518, 518]
+            depth_maps = triton_client.infer_batch(tensors)  # [N, 518, 518]
+            depth_results = [
+                postprocess_depth_map(
+                    dm,
+                    config.get_depth_min_cm(),
+                    config.get_depth_max_cm(),
+                    config.get_confidence_min(),
+                    config.get_confidence_max(),
+                )
+                for dm in depth_maps
+            ]
+        else:
+            depth_results = [(5.0, 0.5)] * len(batch)
+
+        for pending, (depth_cm, confidence) in zip(batch, depth_results):
             record = {
                 "event_id": pending.event["event_id"],
                 "depth_cm": depth_cm,
@@ -421,7 +426,7 @@ def main():
         model_version=config.get_triton_model_version(),
         timeout_seconds=config.get_triton_timeout_seconds(),
     )
-    wait_for_triton_ready(triton_client)
+    triton_available = wait_for_triton_ready(triton_client)
 
     minio_client = connect_minio(config)
     if minio_client is None:
@@ -518,7 +523,7 @@ def main():
 
             if accumulator.should_flush():
                 batch = accumulator.flush()
-                _process_batch(batch, preprocessor, triton_client, producer, consumer, serializer, config)
+                _process_batch(batch, preprocessor, triton_client, producer, consumer, serializer, config, triton_available)
 
     except KeyboardInterrupt:
         print("\n\n[INFO] Stopped by user.")
