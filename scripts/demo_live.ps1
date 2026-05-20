@@ -56,7 +56,7 @@ Reset-Topics
 Truncate-Stores
 
 Write-Host "=== RESTART SERVICES ==="
-docker compose restart bev-surface-service depth-estimation-service severity-calculation-service final-enrichment-service etl-service geo-enrichment-service | Out-Null
+docker compose restart bev-surface-service depth-estimation-service severity-calculation-service final-enrichment-service etl-service geo-enrichment-service pipeline-observer | Out-Null
 
 Write-Host "=== REBOOTSTRAP FLINK ==="
 & (Join-Path $PSScriptRoot "start-lakehouse-jobs.ps1")

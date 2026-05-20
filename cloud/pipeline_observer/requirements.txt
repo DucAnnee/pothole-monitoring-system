@@ -1,0 +1,4 @@
+confluent-kafka[avro]
+redis
+psycopg2-binary
+prometheus-client

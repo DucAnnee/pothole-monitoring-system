@@ -793,6 +793,34 @@ services:
       - kafka-net
     restart: unless-stopped
 
+  pipeline-observer:
+    build:
+      context: ./cloud
+      dockerfile: pipeline_observer/Dockerfile
+    container_name: pipeline-observer
+    command: python -u pipeline_observer/pipeline_observer.py
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      postgis:
+        condition: service_healthy
+    ports:
+      - "8009:8009"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9094,kafka-2:9094,kafka-3:9094
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      POSTGIS_HOST: postgis
+      POSTGIS_PORT: "5432"
+    networks:
+      - kafka-net
+    restart: unless-stopped
+
 networks:
   kafka-net:
     name: kafka-net
