@@ -29,10 +29,16 @@ export default function HealthPage() {
     return () => clearInterval(id);
   }, [revalidate]);
 
-  const minioUsedPct = (data.minio.used_gb / data.minio.total_gb) * 100;
+  const minioUsedPct =
+    data.minio.used_gb != null && data.minio.total_gb ? (data.minio.used_gb / data.minio.total_gb) * 100 : 0;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+        <a href="http://localhost:3001" target="_blank" rel="noreferrer" style={{ fontSize: 13, color: "#2563EB", textDecoration: "none" }}>
+          View in Grafana →
+        </a>
+      </Box>
       {/* Top 2-col row */}
       <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
         {/* Kafka */}
@@ -79,7 +85,9 @@ export default function HealthPage() {
                 <Box sx={{ display: "flex", justifyContent: "space-between", mb: 0.25 }}>
                   <Typography variant="caption" color="text.secondary">Storage Usage</Typography>
                   <Typography variant="caption" fontWeight={600}>
-                    {data.minio.used_gb.toFixed(1)} / {data.minio.total_gb} GB
+                    {data.minio.used_gb != null && data.minio.total_gb != null
+                      ? `${data.minio.used_gb.toFixed(1)} / ${data.minio.total_gb} GB`
+                      : "n/a"}
                   </Typography>
                 </Box>
                 <LinearProgress variant="determinate" value={minioUsedPct} sx={{ height: 6, borderRadius: 3 }} />
@@ -110,7 +118,7 @@ export default function HealthPage() {
                 ].map(({ label, value }) => (
                   <Box key={label} sx={{ border: "1px solid #E2E8F0", borderRadius: 1.5, p: 1 }}>
                     <Typography variant="caption" color="text.secondary">{label}</Typography>
-                    <Typography variant="body1" fontWeight={700}>{value}</Typography>
+                    <Typography variant="body1" fontWeight={700}>{value ?? "n/a"}</Typography>
                   </Box>
                 ))}
               </Box>
@@ -139,7 +147,7 @@ export default function HealthPage() {
                   <Box sx={{ display: "flex", justifyContent: "space-between" }}>
                     <Box>
                       <Typography variant="caption" color="text.secondary">Uptime</Typography>
-                      <Typography variant="caption" fontWeight={600} display="block">{svc.uptime}%</Typography>
+                      <Typography variant="caption" fontWeight={600} display="block">{svc.uptime != null ? `${svc.uptime}%` : "n/a"}</Typography>
                     </Box>
                     <Box>
                       <Typography variant="caption" color="text.secondary">Latency</Typography>
