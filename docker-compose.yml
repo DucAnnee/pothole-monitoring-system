@@ -340,6 +340,10 @@ services:
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_ENDPOINT_URL_S3=http://minio:9000
+      - |
+        FLINK_PROPERTIES=
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
     volumes:
       - ./lakehouse/flink/sql:/opt/pothole-lakehouse/sql:ro
       - ./container-conf/flink/lib/iceberg-aws-bundle-1.10.1.jar:/opt/flink/lib/iceberg-aws-bundle-1.10.1.jar:ro
@@ -351,6 +355,7 @@ services:
       - ./container-conf/flink/lib/postgresql-42.7.11.jar:/opt/flink/lib/postgresql-42.7.11.jar:ro
       - ./container-conf/flink/lib/hadoop-client-api-3.3.6.jar:/opt/flink/lib/hadoop-client-api-3.3.6.jar:ro
       - ./container-conf/flink/lib/hadoop-client-runtime-3.3.6.jar:/opt/flink/lib/hadoop-client-runtime-3.3.6.jar:ro
+      - ./container-conf/flink/lib/flink-metrics-prometheus-1.19.3.jar:/opt/flink/lib/flink-metrics-prometheus-1.19.3.jar:ro
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -371,7 +376,11 @@ services:
     command: taskmanager
     environment:
       - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
-      - "FLINK_PROPERTIES=taskmanager.numberOfTaskSlots: 20"
+      - |
+        FLINK_PROPERTIES=
+        taskmanager.numberOfTaskSlots: 20
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
@@ -387,6 +396,7 @@ services:
       - ./container-conf/flink/lib/postgresql-42.7.11.jar:/opt/flink/lib/postgresql-42.7.11.jar:ro
       - ./container-conf/flink/lib/hadoop-client-api-3.3.6.jar:/opt/flink/lib/hadoop-client-api-3.3.6.jar:ro
       - ./container-conf/flink/lib/hadoop-client-runtime-3.3.6.jar:/opt/flink/lib/hadoop-client-runtime-3.3.6.jar:ro
+      - ./container-conf/flink/lib/flink-metrics-prometheus-1.19.3.jar:/opt/flink/lib/flink-metrics-prometheus-1.19.3.jar:ro
     depends_on:
       flink-jobmanager:
         condition: service_started
@@ -446,9 +456,11 @@ services:
       - "3001:3000"
     environment:
       - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=trino-datasource
+      - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       # - ./container-data/grafana/data:/var/lib/grafana
       - grafana-data:/var/lib/grafana
+      - ./container-conf/grafana/provisioning:/etc/grafana/provisioning:ro
     networks:
       - kafka-net
 
@@ -820,6 +832,62 @@ services:
     networks:
       - kafka-net
     restart: unless-stopped
+
+  # ==========================================================
+  #  PROMETHEUS + EXPORTERS (metrics scrape backend)
+  # ==========================================================
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./container-conf/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - kafka-net
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: kafka-exporter
+    command: ["--kafka.server=kafka-1:9094","--kafka.server=kafka-2:9094","--kafka.server=kafka-3:9094"]
+    networks:
+      - kafka-net
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://serving:servingpassword@postgis:5432/postgis_serving?sslmode=disable"
+    networks:
+      - kafka-net
+    depends_on:
+      postgis:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    networks:
+      - kafka-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - kafka-net
 
 networks:
   kafka-net:
