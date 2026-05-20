@@ -1,0 +1,6 @@
+confluent-kafka[avro]
+trino
+redis
+h3
+requests
+pyyaml

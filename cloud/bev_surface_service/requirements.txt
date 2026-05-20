@@ -1,0 +1,5 @@
+confluent-kafka[avro]
+minio
+opencv-python-headless
+numpy
+pyyaml

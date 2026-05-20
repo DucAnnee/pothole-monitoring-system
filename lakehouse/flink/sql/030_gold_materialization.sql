@@ -1,3 +1,25 @@
+SET 'execution.checkpointing.interval' = '30000';
+SET 'execution.checkpointing.mode' = 'AT_LEAST_ONCE';
+
+USE CATALOG default_catalog;
+DROP CATALOG IF EXISTS lakehouse;
+
+CREATE CATALOG lakehouse WITH (
+  'type' = 'iceberg',
+  'catalog-type' = 'rest',
+  'uri' = 'http://polaris:8181/api/catalog/',
+  'warehouse' = 'warehouse',
+  'credential' = 'root:s3cr3t',
+  'oauth2-server-uri' = 'http://polaris:8181/api/catalog/v1/oauth/tokens',
+  'scope' = 'PRINCIPAL_ROLE:ALL',
+  'header.Polaris-Realm' = 'POLARIS',
+  'io-impl' = 'org.apache.iceberg.aws.s3.S3FileIO',
+  's3.endpoint' = 'http://minio:9000',
+  's3.path-style-access' = 'true',
+  's3.access-key-id' = 'minioadmin',
+  's3.secret-access-key' = 'minioadmin'
+);
+
 USE CATALOG lakehouse;
 
 INSERT INTO gold.current_road_defects

@@ -1,0 +1,8 @@
+confluent-kafka[avro]
+pyiceberg
+pyiceberg-core
+s3fs
+pyarrow
+trino
+requests
+pyyaml

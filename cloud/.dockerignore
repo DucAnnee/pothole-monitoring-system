@@ -1,0 +1,44 @@
+# Model weights and large binary assets — not needed inside cloud service containers.
+# Triton model repo is mounted into the triton container at runtime.
+triton_inference_server/triton_model_repo/
+sam3_finetune/outputs/
+sam3_finetune/**/*.pt
+sam3_finetune/**/*.pth
+sam3_finetune/**/*.bin
+sam3_finetune/**/*.ckpt
+sam3_finetune/**/*.safetensors
+depth_estimation_model/Depth-Anything-V2/
+
+# Generic weight/checkpoint files anywhere in the context
+**/*.pt
+**/*.pth
+**/*.onnx
+**/*.onnx.data
+**/*.safetensors
+**/*.bin
+**/*.ckpt
+
+# Python runtime artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.venv/
+**/venv/
+**/.env
+
+# Build / test artifacts
+**/.pytest_cache/
+**/htmlcov/
+**/.coverage
+**/dist/
+**/build/
+**/*.egg-info/
+
+# Experiment tracking
+**/wandb/
+**/mlruns/
+**/outputs/
+
+# Misc
+**/.git/
+**/*.log

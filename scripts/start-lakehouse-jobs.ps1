@@ -143,21 +143,10 @@ function Submit-FlinkSql {
         [string]$FileName
     )
 
+    # Each SQL file is self-contained: it sets checkpointing, drops/recreates
+    # the lakehouse catalog, and runs USE CATALOG before its INSERTs. No shared
+    # session preamble is prepended.
     $sqlPath = "/opt/pothole-lakehouse/sql/$FileName"
-    if ($FileName -ne "010_kafka_to_bronze.sql") {
-        $tempPath = "/tmp/pothole-lakehouse-$FileName"
-        $bootstrapPath = "/opt/pothole-lakehouse/sql/010_kafka_to_bronze.sql"
-        $catalogPreambleEnd = "USE CATALOG lakehouse;"
-        $buildTempSql = "awk '1; /^[[:space:]]*USE[[:space:]]+CATALOG[[:space:]]+lakehouse;[[:space:]]*$/ { exit }' $bootstrapPath > $tempPath && printf '\n' >> $tempPath && cat $sqlPath >> $tempPath"
-
-        Write-Host "Preparing Flink SQL session bootstrap through '$catalogPreambleEnd': $tempPath"
-        docker exec flink-jobmanager /bin/bash -lc $buildTempSql
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to build temporary Flink SQL file '$tempPath'."
-        }
-
-        $sqlPath = $tempPath
-    }
 
     Write-Host "Submitting Flink SQL job: $FileName"
     docker exec -d flink-jobmanager /bin/bash -lc "/opt/flink/bin/sql-client.sh -f $sqlPath > /tmp/$FileName.log 2>&1"

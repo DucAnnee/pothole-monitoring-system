@@ -163,6 +163,11 @@ services:
               --if-not-exists \
               --config retention.ms=604800000 --config cleanup.policy=delete
 
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9094 --create --topic pothole.geo.enriched.v1 \
+              --partitions 12 --replication-factor 3 \
+              --if-not-exists \
+              --config retention.ms=604800000 --config cleanup.policy=delete
+
           # ----------------------------
           # DLQ topics
           # ----------------------------
@@ -183,6 +188,11 @@ services:
               --config retention.ms=1209600000 --config cleanup.policy=delete
 
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9094 --create --topic pothole.severity.score.dlq.v1 \
+              --partitions 12 --replication-factor 3 \
+              --if-not-exists \
+              --config retention.ms=1209600000 --config cleanup.policy=delete
+
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:9094 --create --topic pothole.geo.enriched.dlq.v1 \
               --partitions 12 --replication-factor 3 \
               --if-not-exists \
               --config retention.ms=1209600000 --config cleanup.policy=delete
@@ -326,6 +336,10 @@ services:
       - "8084:8081"
     environment:
       - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_ENDPOINT_URL_S3=http://minio:9000
     volumes:
       - ./lakehouse/flink/sql:/opt/pothole-lakehouse/sql:ro
       - ./container-conf/flink/lib/iceberg-aws-bundle-1.10.1.jar:/opt/flink/lib/iceberg-aws-bundle-1.10.1.jar:ro
@@ -357,7 +371,11 @@ services:
     command: taskmanager
     environment:
       - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
-      - TASK_MANAGER_NUMBER_OF_TASK_SLOTS=4
+      - "FLINK_PROPERTIES=taskmanager.numberOfTaskSlots: 20"
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_ENDPOINT_URL_S3=http://minio:9000
     volumes:
       - ./lakehouse/flink/sql:/opt/pothole-lakehouse/sql:ro
       - ./container-conf/flink/lib/iceberg-aws-bundle-1.10.1.jar:/opt/flink/lib/iceberg-aws-bundle-1.10.1.jar:ro
@@ -499,7 +517,7 @@ services:
         
         echo "Creating catalog...";
         STORAGE_LOCATION="s3://warehouse";
-        STORAGE_CONFIG_INFO='{"storageType":"S3","endpoint":"http://localhost:9000","endpointInternal":"http://minio:9000","pathStyleAccess":true}';
+        STORAGE_CONFIG_INFO='{"storageType":"S3","endpoint":"http://minio:9000","endpointInternal":"http://minio:9000","pathStyleAccess":true}';
         
         PAYLOAD="{
           \"catalog\": {
@@ -634,7 +652,7 @@ services:
   etl-service:
     build:
       context: ./cloud
-      dockerfile: Dockerfile
+      dockerfile: etl_service/Dockerfile
     container_name: etl-service
     command: python etl_service/etl_microservice.py
     depends_on:
@@ -662,7 +680,7 @@ services:
   bev-surface-service:
     build:
       context: ./cloud
-      dockerfile: Dockerfile
+      dockerfile: bev_surface_service/Dockerfile
     container_name: bev-surface-service
     command: python bev_surface_service/bev_surface_service.py
     depends_on:
@@ -685,7 +703,7 @@ services:
   depth-estimation-service:
     build:
       context: ./cloud
-      dockerfile: Dockerfile
+      dockerfile: depth_estimation_model/Dockerfile
     container_name: depth-estimation-service
     command: python depth_estimation_model/cloud_pipeline.py
     depends_on:
@@ -695,14 +713,14 @@ services:
         condition: service_started
       minio:
         condition: service_healthy
-      triton-inference-server:
-        condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka-1:9094,kafka-2:9094,kafka-3:9094
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
       MINIO_ENDPOINT: minio:9000
       TRITON_HOST: triton-inference-server
       TRITON_GRPC_PORT: 8001
+      BATCH_MAX_SIZE: "1"
+      TRITON_TIMEOUT_SECONDS: "120"
     networks:
       - kafka-net
     restart: unless-stopped
@@ -710,7 +728,7 @@ services:
   severity-calculation-service:
     build:
       context: ./cloud
-      dockerfile: Dockerfile
+      dockerfile: severity_calculation_service/Dockerfile
     container_name: severity-calculation-service
     command: python severity_calculation_service/severity_aggregator.py
     depends_on:
@@ -728,7 +746,7 @@ services:
   final-enrichment-service:
     build:
       context: ./cloud
-      dockerfile: Dockerfile
+      dockerfile: final_enrichment_service/Dockerfile
     container_name: final-enrichment-service
     command: python final_enrichment_service/final_enrichment_service.py
     depends_on:
@@ -747,6 +765,28 @@ services:
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
       TRINO_HOST: trino
       TRINO_PORT: "8080"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    networks:
+      - kafka-net
+    restart: unless-stopped
+
+  geo-enrichment-service:
+    build:
+      context: ./cloud
+      dockerfile: geo_enrichment_service/Dockerfile
+    container_name: geo-enrichment-service
+    command: python geo_enrichment_service/geo_enrichment_service.py
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9094,kafka-2:9094,kafka-3:9094
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
       REDIS_HOST: redis
       REDIS_PORT: "6379"
     networks:

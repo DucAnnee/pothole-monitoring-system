@@ -1,0 +1,4 @@
+confluent-kafka[avro]
+redis
+h3
+requests

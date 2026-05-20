@@ -62,6 +62,21 @@ CREATE TABLE IF NOT EXISTS iceberg.bronze.severity_score_events (
 )
 WITH (format = 'PARQUET', partitioning = ARRAY['day(calculated_at)']);
 
+CREATE TABLE IF NOT EXISTS iceberg.bronze.geo_enrichment_events (
+  event_id VARCHAR,
+  city VARCHAR,
+  district VARCHAR,
+  ward VARCHAR,
+  road_segment_id VARCHAR,
+  geocoded_at TIMESTAMP(6),
+  kafka_topic VARCHAR,
+  kafka_partition INTEGER,
+  kafka_offset BIGINT,
+  ingested_at TIMESTAMP(6),
+  payload_json VARCHAR
+)
+WITH (format = 'PARQUET', partitioning = ARRAY['day(geocoded_at)']);
+
 CREATE TABLE IF NOT EXISTS iceberg.bronze.pipeline_latency_events (
   event_id VARCHAR,
   stage VARCHAR,

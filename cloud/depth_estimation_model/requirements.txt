@@ -1,0 +1,6 @@
+confluent-kafka[avro]
+minio
+opencv-python-headless
+numpy
+tritonclient[grpc]
+pyyaml
